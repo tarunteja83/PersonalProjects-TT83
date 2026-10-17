@@ -1,13 +1,9 @@
 import os
 import json
-import math
 import shutil
 import yt_dlp
 
 from brain import item_matches
-
-SECONDS_PER_LONG_CLIP = 15
-MAX_LONG_CLIPS = 28
 
 def ffmpeg_location():
     # yt-dlp needs FFmpeg to merge video and audio; fall back to the copy bundled with MoviePy when none is installed
@@ -44,8 +40,11 @@ class DownloaderAgent:
             provider, api_key = stock_footage.choose_provider(self.footage.get("provider", "auto"))
             ai_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
+        # Stock footage is chosen after the script is narrated ("voiced"), one clip per scene of the script;
+        # re-used trending videos are downloaded straight after discovery
+        wanted_status = "voiced" if stock else "discovered"
         for item in trends:
-            if item["status"] == "discovered" and item_matches(item, active_profile, profile):
+            if item["status"] == wanted_status and item_matches(item, active_profile, profile):
                 vid_id = item["video_id"]
                 if stock:
                     self.fetch_stock(item, stock_footage, provider, api_key, ai_client, profile)
@@ -62,30 +61,35 @@ class DownloaderAgent:
                   "to .env / GitHub secrets.")
             item["status"] = "download_failed"
             return
-        if item.get("format") == "long":
-            # About one clip every SECONDS_PER_LONG_CLIP seconds, three clips per search term
-            clips = min(MAX_LONG_CLIPS, math.ceil(item.get("target_seconds", 360) / SECONDS_PER_LONG_CLIP))
-            per_term, orientation = 3, "landscape"
-            term_count = math.ceil(clips / per_term)
-        else:
-            per_term, orientation = 1, "portrait"
-            term_count = int(self.footage.get("clips_per_video", 3))
-        terms = stock_footage.search_terms(ai_client, item, profile, self.config.get("ai_models"), term_count)
-        print(f"[Agent 2: Downloader] Stock footage for '{item['original_title'][:60]}': {', '.join(terms)}")
+        scenes = item.get("scenes") or [{"start": 0, "end": item.get("voice_seconds", 30), "text": item["original_title"]}]
+        orientation = "landscape" if item.get("format") == "long" else "portrait"
+        terms = stock_footage.scene_terms(ai_client, scenes, item, profile, self.config.get("ai_models"))
+        print(f"[Agent 2: Downloader] {len(scenes)} scenes for '{item['original_title'][:60]}'")
         try:
-            paths, credits = stock_footage.fetch_clips(provider, api_key, terms, self.download_dir,
-                                                       f"stock_{vid_id}", kids=profile.get("made_for_kids", False),
-                                                       style=profile.get("footage_style", "any"),
-                                                       orientation=orientation, clips_per_term=per_term)
+            paths, credits, used_terms = stock_footage.fetch_scene_clips(
+                provider, api_key, terms, self.download_dir, f"stock_{vid_id}",
+                kids=profile.get("made_for_kids", False), style=profile.get("footage_style", "any"),
+                orientation=orientation)
         except Exception as e:
             print(f"[Agent 2: Downloader] Stock footage failed for {vid_id}: {stock_footage.safe_error(e, api_key)}")
-            paths, credits = [], []
-        if paths:
-            item["footage_paths"] = paths
+            paths, credits, used_terms = [], [], []
+        # Sync report: what is said in each scene, and the footage shown with it
+        for scene, used in zip(scenes, used_terms):
+            words = " ".join(scene["text"].split()[:9])
+            print(f"   {int(scene['start']) // 60}:{int(scene['start']) % 60:02d}-{int(scene['end']) // 60}:"
+                  f"{int(scene['end']) % 60:02d}  shows '{used or 'neighbouring clip'}'  while saying: {words}...")
+        if any(paths):
+            # A scene with no clip reuses the nearest earlier (or later) one, so every scene keeps its timing
+            filled, last = [], next(p for p in paths if p)
+            for path in paths:
+                last = path or last
+                filled.append(last)
+            item["footage_paths"] = filled
+            item["scene_terms"] = used_terms
             item["footage_provider"] = provider
             item["footage_credits"] = sorted(set(credits))
-            item["raw_video_path"] = paths[0]
-            item["status"] = "downloaded"
+            item["raw_video_path"] = filled[0]
+            item["status"] = "ready_to_edit"
         else:
             item["status"] = "download_failed"
 

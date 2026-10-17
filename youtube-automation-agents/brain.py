@@ -30,7 +30,7 @@ SPEEDS = ["-15%", "-5%", "+0%", "+10%"]
 VIDEO_LENGTHS = [15, 30, 45, 60]
 VISIBILITIES = ["public", "unlisted", "private"]
 FOOTAGE_STYLES = ["any", "animation", "film", "mixed"]
-LONG_MINUTES = [5, 6, 7, "5-7"]
+LONG_MINUTES = [4, 5, 6, 7, "4-5", "4-6", "5-6", "5-7", "6-7"]
 MAX_LONG_VIDEOS_PER_DAY = 4
 MAX_VIDEOS_PER_DAY = 50
 # Upload videos, and read which channel a login belongs to (checked before every upload)
@@ -233,7 +233,8 @@ def validate_answers(answers, channels):
         if long_count is not None and not (isinstance(long_count, int) and 0 <= long_count <= MAX_LONG_VIDEOS_PER_DAY):
             problems.append(f"{where}: long_videos_per_day must be a whole number from 0 to {MAX_LONG_VIDEOS_PER_DAY}")
         if a.get("long_video_minutes") is not None and a["long_video_minutes"] not in LONG_MINUTES:
-            problems.append(f'{where}: long_video_minutes must be one of 5, 6, 7 or "5-7"')
+            problems.append(f'{where}: long_video_minutes must be one of 4, 5, 6, 7, "4-5", "4-6", "5-6", "5-7" '
+                            'or "6-7"')
         long_times = a.get("long_post_times") or []
         if not isinstance(long_times, list):
             problems.append(f'{where}: long_post_times must be a list, e.g. ["13:00", "19:00"]')

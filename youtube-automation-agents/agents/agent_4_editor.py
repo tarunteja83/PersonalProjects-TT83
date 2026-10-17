@@ -166,7 +166,7 @@ class VideoEditorAgent:
     def render_stock(self, item, output_video):
         """Build a stock-footage video entirely with FFmpeg: much faster than MoviePy for long videos.
 
-        Each clip is cut to an equal share of the narration, scaled and cropped to the frame, joined, then the
+        Each clip is cut to its scene's narration time, scaled and cropped to the frame, joined, then the
         watermark, narration and end card are added in a single final encode.
         """
         width, height = LONG_SIZE if item.get("format") == "long" else SHORT_SIZE
@@ -174,7 +174,13 @@ class VideoEditorAgent:
         duration = voice.duration
         voice.close()
         clips = item["footage_paths"]
-        segment = duration / len(clips)
+        scenes = item.get("scenes") or []
+        if len(scenes) == len(clips):
+            # Each clip plays exactly while its scene is narrated; the last one runs to the end of the narration
+            lengths = [max(0.5, s["end"] - s["start"]) for s in scenes]
+            lengths[-1] = max(0.5, duration - scenes[-1]["start"])
+        else:
+            lengths = [duration / len(clips)] * len(clips)
         fit = (f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},"
                f"setsar=1,fps=30,format=yuv420p")
 
@@ -184,7 +190,7 @@ class VideoEditorAgent:
             for index, clip in enumerate(clips):
                 part = os.path.join(work, f"part{index:03d}.mp4")
                 # -stream_loop repeats clips shorter than their share
-                ffmpeg("-stream_loop", "-1", "-i", clip, "-t", f"{segment:.3f}", "-an", "-vf", fit,
+                ffmpeg("-stream_loop", "-1", "-i", clip, "-t", f"{lengths[index]:.3f}", "-an", "-vf", fit,
                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", part)
                 parts.append(part)
             with open(os.path.join(work, "parts.txt"), "w", encoding="utf-8") as f:
@@ -225,7 +231,9 @@ class VideoEditorAgent:
             trends = json.load(f)
 
         for item in trends:
-            if item["status"] == "voiced" and item_matches(item, self.active_key, self.profile):
+            # Stock videos are ready once their scene clips are in; re-used trending videos once narrated
+            ready = item["status"] == "ready_to_edit" or (item["status"] == "voiced" and not item.get("scenes"))
+            if ready and item_matches(item, self.active_key, self.profile):
                 vid_id = item["video_id"]
                 raw_video = item["raw_video_path"]
                 vo_audio = item["voiceover_path"]

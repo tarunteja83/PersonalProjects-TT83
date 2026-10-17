@@ -112,17 +112,22 @@ class TrendScoutAgent:
     def entry(self, item, query):
         vid_id = item["id"]["videoId"]
         entry_format = self.profile.get("format", "short")
-        minutes = self.profile.get("long", {}).get("minutes", 6)
+        minutes = str(self.profile.get("long", {}).get("minutes", 6))
         if entry_format == "long":
-            # "5-7" gives every long video its own length between 5 and 7 minutes
-            target_seconds = random.randint(300, 420) if minutes == "5-7" else int(minutes) * 60
+            # A range such as "5-6" gives every long video its own length, never longer than the upper bound
+            low, _, high = minutes.partition("-")
+            low, high = int(low), int(high or low)
+            target_seconds = random.randint(low * 60, high * 60 - 20) if high > low else low * 60 - 10
+            max_seconds = high * 60 - 5  # leaves room for the end card within the upper limit
         else:
             target_seconds = self.profile.get("target_duration_seconds", 30)
+            max_seconds = int(target_seconds * 1.2)
         return {
             "video_id": vid_id,
             "profile": self.active_key,
             "format": entry_format,
             "target_seconds": target_seconds,
+            "max_seconds": max_seconds,
             "genre": query,
             # The search API returns HTML-escaped text (e.g. &#39; and &amp;)
             "original_title": html.unescape(item["snippet"]["title"]),

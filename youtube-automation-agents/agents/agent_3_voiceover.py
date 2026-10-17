@@ -11,6 +11,37 @@ from brain import item_matches
 WORDS_PER_SECOND = 2.5
 # Scripts more than 20% over their target word count are shortened
 LENGTH_TOLERANCE = 1.2
+# Narration longer than the video's maximum length (times this factor) is shortened and narrated again
+DURATION_TOLERANCE = 1.0
+# Stock footage changes scene about this often in long videos; Shorts use footage.clips_per_video scenes
+LONG_SCENE_SECONDS = 15
+
+
+def stock_mode(config, profile):
+    """Stock-footage videos are scripted first, then footage is chosen to match each scene of the script."""
+    return (config.get("footage") or {}).get("source", "stock") == "stock" or profile.get("format") == "long"
+
+
+def group_scenes(sentences, total_seconds, scene_seconds):
+    """Group timed sentences into scenes of about scene_seconds; each scene gets one stock clip.
+
+    sentences: [(start_seconds, text)]. Returns [{"start", "end", "text"}] covering 0..total_seconds.
+    """
+    if not sentences:
+        return [{"start": 0.0, "end": total_seconds, "text": ""}]
+    scenes, current = [], {"start": 0.0, "text": []}
+    for index, (start, text) in enumerate(sentences):
+        if current["text"] and start - current["start"] >= scene_seconds:
+            scenes.append({"start": current["start"], "end": start, "text": " ".join(current["text"])})
+            current = {"start": start, "text": []}
+        current["text"].append(text)
+    scenes.append({"start": current["start"], "end": total_seconds, "text": " ".join(current["text"])})
+    # Fold a very short final scene into the one before it
+    if len(scenes) > 1 and scenes[-1]["end"] - scenes[-1]["start"] < scene_seconds / 3:
+        last = scenes.pop()
+        scenes[-1]["end"], scenes[-1]["text"] = last["end"], scenes[-1]["text"] + " " + last["text"]
+    return scenes
+
 
 class VoiceoverAgent:
     def __init__(self, config, instructions):
@@ -30,13 +61,15 @@ class VoiceoverAgent:
     def generate_script(self, item):
         target_seconds = item.get("target_seconds") or self.profile.get("target_duration_seconds", 30)
         target_words = int(target_seconds * WORDS_PER_SECOND)
+        avoid_terms = self.profile.get("avoid_terms") or []
         if item.get("format") == "long":
             task = (
                 f"Task: Write an original, engaging narration script of about {target_words} words (about "
                 f"{round(target_seconds / 60)} minutes spoken) for a regular YouTube video, not a Short. Open with a "
                 "strong hook, then 3 to 5 clearly separated parts (a story with a beginning, middle and end, or an "
                 "explanation that builds step by step), keep a lively pace throughout, and end with a short recap and "
-                "a question inviting viewers to comment.\n"
+                "a question inviting viewers to comment. Describe concrete, visual things (places, objects, animals, "
+                "people, actions) so matching footage can be shown for every sentence.\n"
             )
         else:
             task = (
@@ -44,7 +77,6 @@ class VoiceoverAgent:
                 "topic for a YouTube Short: commentary, explanation, or a short funny story, whichever fits the "
                 "channel's tone and the master instructions.\n"
             )
-        avoid_terms = self.profile.get("avoid_terms") or []
 
         prompt = (
             f"Follow these master BRAIN instructions strictly:\n{self.instructions}\n\n"
@@ -87,25 +119,69 @@ class VoiceoverAgent:
         return trimmed[:cut + 1] if cut > len(trimmed) // 2 else trimmed
 
     def synthesize_voice(self, script_text, video_id):
+        """Narrate the script; returns (mp3 path, spoken seconds, [(sentence start seconds, sentence text)])."""
         out_mp3 = os.path.join(self.paths["audio_renders"], f"vo_{self.active_key}_{video_id}.mp3")
         print(f"[Agent 3: Voiceover] Narrating video {video_id} with {self.voice} ({self.voice_rate})...")
-        communicate = edge_tts.Communicate(script_text, self.voice, rate=self.voice_rate)
-        asyncio.run(communicate.save(out_mp3))
-        return out_mp3
+
+        async def narrate():
+            communicate = edge_tts.Communicate(script_text, self.voice, rate=self.voice_rate,
+                                               boundary="SentenceBoundary")
+            sentences, end = [], 0.0
+            with open(out_mp3, "wb") as f:
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        f.write(chunk["data"])
+                    elif chunk["type"] == "SentenceBoundary":
+                        start = chunk["offset"] / 1e7
+                        sentences.append((start, chunk["text"]))
+                        end = max(end, start + chunk["duration"] / 1e7)
+            return sentences, end
+
+        sentences, end = asyncio.run(narrate())
+        return out_mp3, end + 0.5, sentences
+
+    def narrate_within_limit(self, item, script):
+        """Narrate, and if the spoken length runs past the video's maximum, shorten the script and narrate again."""
+        max_seconds = item.get("max_seconds")
+        vo_path, seconds, sentences = self.synthesize_voice(script, item["video_id"])
+        if max_seconds and seconds > max_seconds * DURATION_TOLERANCE:
+            words = len(script.split())
+            # Aim for the video's target length (inside the allowed range), not just under the maximum
+            goal_seconds = min(item.get("target_seconds") or max_seconds, max_seconds)
+            target_words = int(words * goal_seconds / seconds)
+            print(f"[Agent 3: Voiceover] Narration is {seconds / 60:.1f} min, over the {max_seconds / 60:.1f} min "
+                  f"limit; shortening to about {target_words} words...")
+            script = self.fit_length(script, target_words) if words > target_words * LENGTH_TOLERANCE else script
+            if len(script.split()) > target_words:
+                script = " ".join(script.split()[:target_words])
+            vo_path, seconds, sentences = self.synthesize_voice(script, item["video_id"])
+        return script, vo_path, seconds, sentences
 
     def run(self):
         manifest_path = self.paths["manifest_file"]
         with open(manifest_path, "r", encoding="utf-8") as f:
             trends = json.load(f)
 
+        # Stock videos are scripted straight after discovery (footage is chosen afterwards to match the script);
+        # re-used trending videos are scripted after their download
+        stock = stock_mode(self.config, self.profile)
+        wanted_status = "discovered" if stock else "downloaded"
+        scene_seconds = LONG_SCENE_SECONDS
+
         for item in trends:
-            if item["status"] == "downloaded" and item_matches(item, self.active_key, self.profile):
+            if item["status"] == wanted_status and item_matches(item, self.active_key, self.profile):
                 vid_id = item["video_id"]
                 try:
                     script = self.generate_script(item)
-                    vo_path = self.synthesize_voice(script, vid_id)
+                    script, vo_path, seconds, sentences = self.narrate_within_limit(item, script)
                     item["generated_script"] = script
                     item["voiceover_path"] = vo_path
+                    item["voice_seconds"] = round(seconds, 2)
+                    if stock:
+                        if item.get("format") != "long":
+                            scene_seconds = seconds / int((self.config.get("footage") or {}).get("clips_per_video", 3))
+                        item["scenes"] = group_scenes(sentences, seconds, scene_seconds)
+                        print(f"[Agent 3: Voiceover] {seconds / 60:.1f} min of narration in {len(item['scenes'])} scenes")
                     item["status"] = "voiced"
                 except Exception as e:
                     print(f"[Agent 3: Voiceover] Failed on {vid_id}: {e}")

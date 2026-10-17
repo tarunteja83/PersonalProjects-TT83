@@ -5,8 +5,9 @@ import shutil
 from datetime import datetime, timedelta, timezone
 
 # Videos still waiting for a later step; if their files are gone they can never finish
-UNFINISHED = ("downloaded", "voiced", "edited")
-FILE_FOR_STATUS = {"downloaded": "raw_video_path", "voiced": "voiceover_path", "edited": "edited_video_path"}
+UNFINISHED = ("downloaded", "voiced", "ready_to_edit", "edited")
+FILE_FOR_STATUS = {"downloaded": "raw_video_path", "voiced": "voiceover_path",
+                   "ready_to_edit": "raw_video_path", "edited": "edited_video_path"}
 
 class CleanupAgent:
     def __init__(self, config):

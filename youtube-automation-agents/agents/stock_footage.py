@@ -72,6 +72,95 @@ def search_terms(ai_client, item, profile, models, count):
     return list(dict.fromkeys(terms + fallback + ["city", "nature", "people", "sky", "abstract"]))[:count]
 
 
+def scene_terms(ai_client, scenes, item, profile, models):
+    """For each scene, [specific term, generic backup term] describing what that scene's narration actually says.
+
+    News channels may name public figures, countries and landmarks in the specific term (stock sites have little
+    footage of named people, so the generic backup is tried next). Kids channels never name real people.
+    """
+    numbered = "\n".join(f"{i + 1}. {scene['text'][:400]}" for i, scene in enumerate(scenes))
+    kids = profile.get("made_for_kids")
+    people_rule = (
+        "Never use names of real people." if kids else
+        "If the scene is about a public figure (a head of state, minister or other government representative), a "
+        "country or a famous place, the first term may name them, e.g. 'Narendra Modi speech' or 'Kremlin Moscow'."
+    )
+    prompt = (
+        f"A narrated video about: {item['original_title']}\n"
+        f"Channel niche: {profile.get('niche', '')}\n"
+        + ("The audience is young children, so keep every term child-friendly.\n" if kids else "")
+        + ("Some clips will be cartoon animation, so terms like 'cartoon cat' work well.\n"
+           if profile.get("footage_style") in ("animation", "mixed") else "")
+        + "For EACH numbered scene below, give two English stock-footage search terms (1 to 4 words each) for "
+        "visuals that show what THAT scene is talking about: first the most specific match, then a more generic "
+        "backup that stock sites are sure to have (people, places, objects, animals, maps, flags, actions). "
+        f"{people_rule} Avoid graphic violence.\n"
+        f"Reply with exactly {len(scenes)} lines in the form 'number. specific term | backup term' and nothing else."
+        f"\n\n{numbered}"
+    )
+    terms = {}
+    try:
+        for line in generate_text(ai_client, prompt, models).splitlines():
+            number, _, rest = line.partition(".")
+            options = [t.strip().strip('"') for t in rest.split("|") if t.strip()]
+            if number.strip().isdigit() and options:
+                terms[int(number) - 1] = options[:2]
+    except Exception as e:
+        print(f"[Stock footage] Could not get scene terms from Gemini ({e}); using topic terms.")
+    fallback = search_terms(ai_client, item, profile, models, 5) if len(terms) < len(scenes) else []
+    return [terms.get(i) or [fallback[i % len(fallback)]] for i in range(len(scenes))]
+
+
+def fetch_scene_clips(provider, api_key, terms, destination_dir, prefix, kids=False, style="any",
+                      orientation="portrait"):
+    """One clip per scene, in scene order, trying each scene's terms in turn (specific first, then backup).
+
+    terms: [[term, ...] per scene]. Returns ([path or None per scene], credits, [term actually used per scene]).
+    """
+    os.makedirs(destination_dir, exist_ok=True)
+    paths, credits, used_terms, used_ids, cache = [], [], [], set(), {}
+    for index, options in enumerate(terms):
+        wanted = clip_type(style, index)
+        path, chosen = None, None
+        try:
+            for term in options:
+                for video_type in ([wanted, None] if wanted else [None]):
+                    key = (term, video_type)
+                    if key not in cache:
+                        cache[key] = with_retries(
+                            lambda: CANDIDATES[provider](api_key, term, kids, video_type, orientation))
+                    pool = [c for c in cache[key] if c[0] not in used_ids]
+                    if pool:
+                        clip_id, url, credit = pool[0]
+                        used_ids.add(clip_id)
+                        path = os.path.join(destination_dir, f"{prefix}_scene{index + 1:03d}.mp4")
+                        with_retries(lambda: download_file(url, path))
+                        credits.append(credit)
+                        chosen = term
+                        print(f"[Stock footage] Scene {index + 1}: '{term}' -> {PROVIDERS[provider]['name']} "
+                              f"video {clip_id}")
+                        break
+                if path:
+                    break
+        except requests.RequestException as e:
+            print(f"[Stock footage] Scene {index + 1} ({' / '.join(options)}) failed: {safe_error(e, api_key)}")
+            path = None
+        if not path:
+            print(f"[Stock footage] Scene {index + 1}: no clip for {' / '.join(options)}; "
+                  "a neighbouring clip will be reused.")
+        paths.append(path)
+        used_terms.append(chosen)
+    return paths, credits, used_terms
+
+
+def download_file(url, target):
+    with requests.get(url, stream=True, timeout=180) as response:
+        response.raise_for_status()
+        with open(target, "wb") as f:
+            for chunk in response.iter_content(chunk_size=1 << 20):
+                f.write(chunk)
+
+
 # ---------- Pexels ----------
 
 def pick_file(video, orientation="portrait"):

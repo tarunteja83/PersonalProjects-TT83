@@ -71,7 +71,7 @@ channels:
     exclude_sources: []                    # Q20. YouTube channels never to take videos from   Options: [] | ["Channel Name 1", "Channel Name 2"]
     footage_style: "film"                  # Q21. Kind of stock clips used          Options: "any" | "animation" (cartoon) | "film" (real footage) | "mixed" (alternate)
     long_videos_per_day: 2                 # Q22. Long landscape videos per day     Options: 0 (none) to 4
-    long_video_minutes: "5-7"              # Q23. Length of each long video         Options: 5 | 6 | 7 | "5-7" (varies each video)
+    long_video_minutes: "5-7"              # Q23. Length of each long video         Options: 4 | 5 | 6 | 7 | "4-5" | "4-6" | "5-6" | "5-7" | "6-7" (a range varies each video; never longer than its upper number)
     long_post_times: ["14:00", "20:00"]    # Q24. When each long video goes live    Options: one "HH:MM" per long video, e.g. ["14:00", "20:00"]
 
   kids_edu:                                # Q1
@@ -101,7 +101,7 @@ channels:
     exclude_sources: []                    # Q20. Options: [] | ["Channel Name 1", "Channel Name 2"]
     footage_style: "mixed"                 # Q21. Options: "any" | "animation" | "film" | "mixed" (cartoon and real clips alternate)
     long_videos_per_day: 2                 # Q22. Options: 0 (none) to 4
-    long_video_minutes: "5-7"              # Q23. Options: 5 | 6 | 7 | "5-7"
+    long_video_minutes: "4-6"              # Q23. Options: 4 | 5 | 6 | 7 | "4-5" | "4-6" | "5-6" | "5-7" | "6-7"
     long_post_times: ["17:00", "19:00"]    # Q24. Options: one "HH:MM" per long video
 
 # =====================================================================
@@ -132,5 +132,5 @@ channels:
 #    exclude_sources: []                   # Q20. [] | ["Channel Name 1", "Channel Name 2"]
 #    footage_style: "any"                  # Q21. "any" | "animation" | "film" | "mixed"
 #    long_videos_per_day: 0                # Q22. 0 to 4
-#    long_video_minutes: 6                 # Q23. 5 | 6 | 7 | "5-7"
+#    long_video_minutes: 6                 # Q23. 4 | 5 | 6 | 7 | "4-5" | "4-6" | "5-6" | "5-7" | "6-7"
 #    long_post_times: []                   # Q24. one "HH:MM" per long video, e.g. ["14:00", "20:00"]

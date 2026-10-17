@@ -5,7 +5,7 @@ import os
 
 from agents.agent_1_scout import TrendScoutAgent
 from agents.agent_2_downloader import DownloaderAgent
-from agents.agent_3_voiceover import VoiceoverAgent
+from agents.agent_3_voiceover import VoiceoverAgent, stock_mode
 from agents.agent_4_editor import VideoEditorAgent
 from agents.agent_5_publisher import PublisherAgent
 from agents.agent_6_cleanup import CleanupAgent
@@ -14,8 +14,8 @@ from brain import item_matches
 
 # Footage can't always be found (no matching stock clips, or a restricted video), so look again a few times
 FIND_ATTEMPTS = 3
-READY_STATUSES = ("downloaded", "voiced", "edited")
-FORMATS = ("short", "long")
+# Long videos are prepared first, so they are certainly ready well before their go-live times
+FORMATS = ("long", "short")
 
 
 def format_profile(profile, fmt):
@@ -62,16 +62,29 @@ class OrchestratorAgent:
 
         scout = TrendScoutAgent(config, self.instructions)
         downloader = DownloaderAgent(paths["manifest_file"], paths["raw_downloads"], config)
+        voiceover = VoiceoverAgent(config, self.instructions)
+        if stock_mode(config, profile):
+            # Stock footage: write and narrate the script first, then fetch a clip that matches each scene
+            ready_statuses, in_progress = ("ready_to_edit", "edited"), ("discovered", "voiced")
+            steps = [voiceover.run, lambda: downloader.run(channel_key)]
+        else:
+            # Re-used trending video: download it first, then narrate
+            ready_statuses, in_progress = ("downloaded", "voiced", "edited"), ("discovered",)
+            steps = [lambda: downloader.run(channel_key), voiceover.run]
+
         for attempt in range(FIND_ATTEMPTS):
-            ready = sum(1 for i in self.manifest_items(channel_key, profile) if i["status"] in READY_STATUSES)
+            items = self.manifest_items(channel_key, profile)
+            ready = sum(1 for i in items if i["status"] in ready_statuses)
+            pending = sum(1 for i in items if i["status"] in in_progress)
             if ready >= wanted:
                 break
             if attempt:
                 print(f"\n[Orchestrator] {ready} of {wanted} video(s) ready; looking for more (attempt {attempt + 1}).")
-            scout.run(limit=wanted - ready)
-            downloader.run(channel_key)
+            if ready + pending < wanted:
+                scout.run(limit=wanted - ready - pending)
+            for step in steps:
+                step()
 
-        VoiceoverAgent(config, self.instructions).run()
         VideoEditorAgent(config).run()
         if not dry_run:
             PublisherAgent(config, self.instructions).run()

@@ -46,7 +46,7 @@ Example: `fetch_time "06:00"`, `first_post_time "07:00"`, `post_frequency "1 hou
 | `"1 hour"` | 07:00, 08:00 … 18:00 |
 | `"3 hours"` | 07:00, 10:00 … 16:00 the next day (too long, so `--check` warns you) |
 
-**Long videos (Q22 to Q24)** are made in the same run, after the Shorts:
+**Long videos (Q22 to Q24)** are made in the same run, **before** the Shorts, so they're ready well ahead of their go-live times. Their length never exceeds the upper number of `long_video_minutes`: if the narration runs long, the script is shortened and narrated again.
 
 | | Shorts | Long videos |
 |---|---|---|
@@ -54,7 +54,7 @@ Example: `fetch_time "06:00"`, `first_post_time "07:00"`, `post_frequency "1 hou
 | Length | `video_length_seconds` (15 to 60 s) | `long_video_minutes` (5 to 7 min) |
 | Topics from | Trending Shorts | Trending 4 to 20 minute videos on the same search phrases |
 | Script | Hook plus one idea | Hook, 3 to 5 parts, recap and a question for comments |
-| Footage | 3 clips | About one clip every 15 seconds (20 to 28 clips) |
+| Footage | 3 scenes, one matching clip each | One matching clip per ~15-second scene (about 20 to 28) |
 | Goes live | `first_post_time`, then every `post_frequency` | At each `long_post_times` entry |
 
 A long video takes roughly 5 minutes to build on GitHub (videos are assembled with FFmpeg for speed). `--check` estimates the monthly GitHub time for all your answers.
@@ -95,7 +95,7 @@ If preparing the videos takes longer than planned, the next free slot is used au
 | Q19 | Make videos without uploading | `test_run` | `true` \| `false` |
 | Q20 | YouTube channels never to take videos from | `exclude_sources` | `[]` or `["Channel Name 1", "Channel Name 2"]` |
 | Q22 | Long landscape videos per day | `long_videos_per_day` | `0` (none) to `4` |
-| Q23 | Length of each long video | `long_video_minutes` | `5` \| `6` \| `7` \| `"5-7"` (a different length each video) |
+| Q23 | Length of each long video | `long_video_minutes` | `4` \| `5` \| `6` \| `7` \| `"4-5"` \| `"4-6"` \| `"5-6"` \| `"5-7"` \| `"6-7"` (a range gives each video a different length, never above the upper number) |
 | Q24 | When each long video goes live | `long_post_times` | one `"HH:MM"` per long video, e.g. `["14:00", "20:00"]` |
 | Q21 | Kind of stock clips used | `footage_style` | `"any"` \| `"animation"` (cartoon) \| `"film"` (real footage) \| `"mixed"` (cartoon and real alternate). Pixabay only; Pexels has no cartoon filter. |
 
@@ -240,7 +240,7 @@ Set under `footage` in `BRAIN.md`:
 
 | `source` | What it does | Works on GitHub? |
 |---|---|---|
-| `"stock"` (default) | Gemini picks 3 visual search terms for the topic. The pipeline downloads 3 matching clips from Pixabay or Pexels (`provider`) and edits them into a vertical montage; landscape clips are centre-cropped. Descriptions credit the site and the contributors, as both sites ask. | Yes |
+| `"stock"` (default) | The script is written and narrated first, and the narration is split into scenes using the voice's sentence timings (3 scenes in a Short, about one every 15 seconds in a long video). Gemini picks a search term from **each scene's own words**, one matching clip per scene is downloaded from Pixabay or Pexels (`provider`), and each clip plays exactly while its scene is narrated. Descriptions credit the site and the contributors, as both sites ask. | Yes |
 | `"youtube"` | Re-uses the trending video itself. | **No.** YouTube blocks downloads from cloud servers ("Sign in to confirm you're not a bot"). Works only when run from your laptop. |
 
 `clips_per_video` sets how many clips each video uses (default 3). The free limits (Pixabay: 100 requests a minute; Pexels: 200 an hour) are far more than 14 videos a day needs.

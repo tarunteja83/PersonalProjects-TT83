@@ -195,7 +195,7 @@ def describe_long(profile):
     long = profile["long"]
     if not long["count"]:
         return "no long videos"
-    minutes = "5 to 7" if long["minutes"] == "5-7" else str(long["minutes"])
+    minutes = str(long["minutes"]).replace("-", " to ")
     return (f"{long['count']} long landscape video(s) of {minutes} min, live at "
             f"{', '.join(long['post_times'][:long['count']])}")
 
@@ -252,7 +252,7 @@ def preflight(config, keys, dry_runs):
     return ready
 
 
-def run_channels(config, instructions, keys, overrides=None, force_dry_run=False, formats=("short", "long")):
+def run_channels(config, instructions, keys, overrides=None, force_dry_run=False, formats=("long", "short")):
     from dotenv import load_dotenv
     load_dotenv(os.path.join(PROJECT_DIR, ".env"))
 
@@ -602,7 +602,8 @@ def main():
         if not keys:
             print("No channel has run: true in questions.yaml.")
             return 1
-    formats = ("short", "long") if args.format == "both" else (args.format,)
+    # Long videos first, so they are ready well before their go-live times
+    formats = ("long", "short") if args.format == "both" else (args.format,)
     return run_channels(config, instructions, keys, overrides, force_dry_run=args.dry_run, formats=formats)
 
 
