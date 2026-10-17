@@ -26,6 +26,71 @@ Everything you need to run the YouTube automation lives in this folder:
 
 ---
 
+## What Happens When the Job Runs
+
+```mermaid
+flowchart TD
+    A[GitHub schedule fires at a channel's fetch_time] --> B[Set up: Python, FFmpeg, rclone, keys]
+    B --> C[Pull YouTube logins and manifest from Google Drive]
+    C --> D[execution.py reads channels.yaml + questions.yaml + BRAIN.md]
+    D --> E[Mark lost half-finished videos expired]
+    E --> F{Long videos first, then Shorts}
+    F --> G[Scout, agent 1: trending topic on YouTube]
+    G --> H[Script and voice, agent 3: Gemini script, narration, sentence timings, length check, scenes]
+    H --> I[Footage, agent 2: one matching stock clip per scene]
+    I --> J[Editor, agent 4: FFmpeg montage, watermark, narration, end card]
+    J --> K[Publisher, agent 5: channel check, title, chunked upload with go-live time]
+    K --> F
+    F -->|both formats done| L[Cleanup, agent 6]
+    L --> M[Telegram alert with links, agent 7]
+    M --> N[Sync manifest and unpublished videos back to Google Drive]
+```
+
+### The GitHub job ([daily_youtube_agents.yml](../../.github/workflows/daily_youtube_agents.yml))
+
+| Step | What it does |
+|---|---|
+| 1. Checkout | Gets the latest code from `main` |
+| 2. Python 3.11 | Sets up Python |
+| 3. Decide which channels are due | Scheduled run: the channel(s) whose `fetch_time` matches. Manual run: the channel you typed. Nothing due means the job stops here at almost no cost. |
+| 4. Install FFmpeg & rclone | Video tools and the Google Drive connection |
+| 5. Install dependencies | Everything in `requirements.txt` |
+| 6. Restore API keys | Writes the GitHub secrets into `.env` and `client_secret.json` |
+| 7. Pull from Google Drive | YouTube logins (`00_tokens`), the manifest (`01_manifests`) and any finished-but-unpublished videos |
+| 8. Run the pipeline | `python execution/execution.py --scheduled --cron "<time>"` (or your manual options). See below. |
+| 9. Sync back to Google Drive | Saves the updated manifest, logins and any unpublished videos for the next run. Runs even if step 8 failed. |
+
+### The pipeline (step 8), for each due channel
+
+1. **Clear lost work:** unfinished videos whose files are gone are marked `expired`, because GitHub starts every run on a fresh machine.
+2. **Long videos, then Shorts.** Long videos go first so they are uploaded hours before their go-live times. For each format:
+
+| Agent | Does | Uses |
+|---|---|---|
+| **1. Scout** ([agent_1_scout.py](../agents/agent_1_scout.py)) | Finds trending YouTube videos on your `search_phrases` (Shorts for Shorts, 4 to 20 minute videos for long ones), in your `language`, rotating phrases and avoiding recent or excluded source channels. Only the topic is used, never the video itself. | YouTube Data API |
+| **3. Script & Voice** ([agent_3_voiceover.py](../agents/agent_3_voiceover.py)) | Gemini writes an original script: hook first; long videos get 3 to 5 parts, a recap and a comment question. Narrated with your `voice` and `voice_speed`, recording when each sentence is spoken. If the narration is longer than allowed, it's shortened and narrated again. Then it's split into scenes: 3 per Short, ~15 seconds each in long videos. | Gemini, edge-tts |
+| **2. Footage** ([agent_2_downloader.py](../agents/agent_2_downloader.py)) | Gemini reads each scene and picks a specific search term (news channels may name public figures) plus a generic backup. One clip per scene comes from Pixabay, cartoon or real per `footage_style`. The log prints a **sync report**: each scene's time range, the footage shown and the words spoken. | Gemini, Pixabay |
+| **4. Editor** ([agent_4_editor.py](../agents/agent_4_editor.py)) | FFmpeg cuts every clip to its scene's narration time and fits it to 1080×1920 (Short) or 1920×1080 (long). It joins them, overlays the watermark, adds only the narration, and appends the LIKE → SUBSCRIBE end card. | FFmpeg |
+| **5. Publisher** ([agent_5_publisher.py](../agents/agent_5_publisher.py)) | Confirms the YouTube login is the channel in `channels.yaml`. Gemini writes the title, description and hashtags, with the stock-footage credit. Uploads in 8 MB resumable chunks, scheduled to go live at its slot. | YouTube Data API, Gemini |
+
+3. **6. Cleanup** ([agent_6_cleanup.py](../agents/agent_6_cleanup.py)): on GitHub, deletes clips, narration and published videos. On a laptop, deletes `YouTube_Auto` day folders older than `keep_days`.
+4. **7. Telegram** ([agent_7_notifier.py](../agents/agent_7_notifier.py)): posts the links to everything uploaded in this run.
+5. **RESULT:** the log ends with how many videos each channel uploaded. If a channel uploaded nothing, the job is marked failed so you notice.
+
+### A typical day
+
+| Time (IST) | What happens |
+|---|---|
+| 06:00 | Frontline run starts: 2 long videos are made and scheduled for 14:00 and 20:00, then 6 Shorts for 07:00 to 12:00 |
+| 07:00 to 12:00 | YouTube publishes one Frontline Short every hour |
+| 08:00 | WonderSprout run starts: 2 long videos for 17:00 and 19:00, then 8 Shorts for 09:00 to 16:00 |
+| 09:00 to 16:00 | YouTube publishes one WonderSprout Short every hour |
+| 14:00, 17:00, 19:00, 20:00 | The long videos go live |
+
+YouTube publishes each video at its time even though the GitHub job finished hours earlier.
+
+---
+
 ## How Posting Works
 
 For each channel, every day it is scheduled (`days`):

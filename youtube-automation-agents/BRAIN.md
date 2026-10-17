@@ -56,6 +56,34 @@ cleanup_rules:                  # GitHub runs; laptop runs keep files in YouTube
   delete_edited_from_previous_dates: true
 ```
 
+## PIPELINE ARCHITECTURE
+(Reference for people. This section is NOT sent to the AI; only the AGENT INSTRUCTIONS below are.)
+
+### Where everything is decided
+| File | Decides |
+|---|---|
+| `execution/channels.yaml` | Who each channel is: name, link, made for kids, watermark, category |
+| `execution/questions.yaml` | What and when each channel posts: genre, searches, language, voice, Shorts schedule, long videos, footage style |
+| `BRAIN.md` (this file) | Rules shared by all channels: AI models, storage, footage source, editing and end card, upload and cleanup, AI writing instructions |
+| `.github/workflows/daily_youtube_agents.yml` | When GitHub runs (generated from each channel's `fetch_time` by `execution.py --check`) |
+| `execution/execution.py` | The only entry point; reads the three files above and runs the agents |
+
+### What one run does, in order
+1. **Choose channels**: a scheduled run picks the channels whose `fetch_time` matches; a manual run uses the channel typed in.
+2. **Clear lost work**: unfinished videos whose files are gone (an interrupted earlier run) are marked `expired`.
+3. **Long videos first, then Shorts.** For each format:
+   1. **Agent 1, Scout**: searches YouTube for trending videos on the channel's search phrases (Shorts topics from Shorts, long topics from 4 to 20 minute videos), in the channel's language, rotating phrases and source channels.
+   2. **Agent 3, Script & Voice**: Gemini writes an original script for the topic (hook first; long videos get 3 to 5 parts and a recap). The voice narrates it, sentence timings are recorded, and if the narration runs longer than allowed the script is shortened and narrated again. The narration is split into scenes (3 per Short, ~15 s each in long videos).
+   3. **Agent 2, Footage**: Gemini picks a specific and a backup search term from each scene's words; one stock clip per scene is downloaded from Pixabay (or Pexels).
+   4. **Agent 4, Editor**: FFmpeg cuts each clip to its scene's narration time, fits it to 1080x1920 (Short) or 1920x1080 (long), joins them, adds the watermark and narration (no original audio), and appends the LIKE then SUBSCRIBE end card.
+   5. **Agent 5, Publisher**: confirms the YouTube login is the right channel, has Gemini write the title, description and hashtags (with stock footage credit), and uploads in resumable chunks with its go-live time (Shorts: `first_post_time` then every `post_frequency`; long: `long_post_times`).
+4. **Agent 6, Cleanup**: deletes files no longer needed (GitHub) or day folders older than `keep_days` (laptop).
+5. **Agent 7, Telegram**: posts links to everything uploaded.
+
+### Video status flow (in the manifest, `01_manifests/trends.json`)
+`discovered` → `voiced` → `ready_to_edit` → `edited` → `published`
+(`download_failed` or `expired` when a step can't be completed; re-used trending videos use `discovered` → `downloaded` → `voiced` → `edited` → `published`.)
+
 ## AGENT INSTRUCTIONS
 * **Agent 1 (Scout):** Prioritize high-velocity Short videos. Store clean metadata in human-readable JSON.
 * **Agent 3 (Script & Voice):** Write a transformative commentary script on the trending topic, sized to the channel's `target_duration_seconds`, in the channel's language and tone. Short, clear sentences that read naturally aloud. **Open with a hook in the first sentence (first 3 seconds)**: a surprising fact, a bold question, or a "you won't believe" moment that makes the viewer keep watching, then pay it off before the end. For news and war channels, strictly avoid graphic or violent terms so the video remains advertiser-friendly; use strategic terminology ("escalating tensions", "frontline shifts", "defense posture"). Name the countries, places and public figures involved (heads of state, ministers and other government representatives), describing their public actions and statements factually, without insults or unproven claims. For kids channels, write as an excited child talking to friends: very simple words, playful wonder, a "Guess what?" or "Whoa!" style hook, and end with a fun question that invites them to watch the next video. Keep it entertaining, not only educational: when the topic is a cartoon, story or silly animal, tell a short ORIGINAL funny story with a clear beginning, a surprise and a happy ending (never retell copyrighted characters such as Peppa Pig or Disney characters); when it is a fact, explain it with wonder and a joke.
