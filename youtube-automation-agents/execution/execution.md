@@ -152,7 +152,7 @@ For Hindi and Telugu, scripts, titles and descriptions are written in the native
 |---|---|
 | `YOUTUBE_API_KEY` | YouTube Data API v3 key |
 | `GEMINI_API_KEY` | Gemini API key |
-| `PIXABAY_API_KEY` | Pixabay API key (free stock footage). `PEXELS_API_KEY` can be used instead. |
+| `PIXABAY_API_KEY` | Pixabay API key (free stock footage). To use Pexels instead, add a `PEXELS_API_KEY` secret and pass it in step 6 of the workflow the same way. |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token |
 | `TELEGRAM_CHANNEL_ID` | Telegram channel ID (starts with `-100`) |
 | `CLIENT_SECRET_JSON` | Full contents of `client_secret.json` |
