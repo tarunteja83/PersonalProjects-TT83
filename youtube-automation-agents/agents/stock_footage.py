@@ -28,7 +28,7 @@ def safe_error(error, api_key):
     return str(error).replace(api_key, "***") if api_key else str(error)
 
 
-def with_retries(action, attempts=3):
+def with_retries(action, attempts=4):
     """Run action(), retrying dropped connections and rate limits with a growing pause."""
     for attempt in range(attempts):
         try:
@@ -37,7 +37,19 @@ def with_retries(action, attempts=3):
             status = getattr(getattr(e, "response", None), "status_code", None)
             if attempt == attempts - 1 or (status is not None and status < 500 and status != 429):
                 raise
-            time.sleep(5 * (attempt + 1))
+            # Rate limits reset per minute, so wait long enough for the window to clear
+            time.sleep(30 * (attempt + 1) if status == 429 else 5 * (attempt + 1))
+
+
+_last_request = [0.0]
+
+
+def pace(min_gap=0.7):
+    """Keep API searches under about 85 a minute (Pixabay allows 100)."""
+    wait = _last_request[0] + min_gap - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
+    _last_request[0] = time.monotonic()
 
 
 def choose_provider(setting="auto"):
@@ -176,6 +188,7 @@ def pexels_candidates(api_key, term, kids, video_type, orientation):
     # Pexels has no animation filter, so video_type is ignored here
     params = {"query": term, "orientation": orientation, "size": "medium", "per_page": 30}
     for url in PEXELS_URLS:
+        pace()
         response = requests.get(url, headers={"Authorization": api_key}, params=params, timeout=30)
         if response.status_code == 404:
             continue
@@ -207,6 +220,7 @@ def pixabay_candidates(api_key, term, kids, video_type, orientation):
               "safesearch": "true" if kids else "false"}
     if video_type in ("animation", "film"):
         params["video_type"] = video_type
+    pace()
     response = requests.get(PIXABAY_URL, params=params, timeout=30)
     response.raise_for_status()
     hits = [h for h in response.json().get("hits", []) if h.get("duration", 0) >= 3]

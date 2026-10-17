@@ -9,6 +9,30 @@ UNFINISHED = ("downloaded", "voiced", "ready_to_edit", "edited")
 FILE_FOR_STATUS = {"downloaded": "raw_video_path", "voiced": "voiceover_path",
                    "ready_to_edit": "raw_video_path", "edited": "edited_video_path"}
 
+
+def required_files(item):
+    """The files a video still needs for its next step."""
+    status = item.get("status")
+    if status == "ready_to_edit":
+        return [item.get("voiceover_path")] + list(item.get("footage_paths") or [])
+    if status in FILE_FOR_STATUS:
+        return [item.get(FILE_FOR_STATUS[status])]
+    return []
+
+
+def expire_missing_files(items):
+    """Mark unfinished videos whose files are gone as "expired", so they stop counting toward the day's videos.
+
+    GitHub runs start on a fresh machine and only finished ("edited") videos are carried over through Google Drive,
+    so a video left half-done by an interrupted run can never be completed.
+    """
+    expired = 0
+    for item in items:
+        if item.get("status") in UNFINISHED and not all(f and os.path.exists(f) for f in required_files(item)):
+            item["status"] = "expired"
+            expired += 1
+    return expired
+
 class CleanupAgent:
     def __init__(self, config):
         self.config = config
@@ -92,9 +116,12 @@ class CleanupAgent:
                     if self._safe_remove(item.get("voiceover_path")):
                         item["voiceover_path"] = None
 
-                if self.cleanup_rules.get("delete_edited_from_previous_dates", True) and is_previous_date:
-                    if self._safe_remove(item.get("edited_video_path")):
-                        item["edited_video_path"] = None
+                # Published videos live on YouTube; deleting the file keeps it from being synced to Drive every run
+                delete_edited = (self.cleanup_rules.get("delete_edited_after_publish", True)
+                                 or (self.cleanup_rules.get("delete_edited_from_previous_dates", True)
+                                     and is_previous_date))
+                if delete_edited and self._safe_remove(item.get("edited_video_path")):
+                    item["edited_video_path"] = None
 
             elif status == "download_failed":
                 discovered_date = item.get("discovered_at", "")[:10]

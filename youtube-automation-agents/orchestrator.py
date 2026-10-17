@@ -8,7 +8,7 @@ from agents.agent_2_downloader import DownloaderAgent
 from agents.agent_3_voiceover import VoiceoverAgent, stock_mode
 from agents.agent_4_editor import VideoEditorAgent
 from agents.agent_5_publisher import PublisherAgent
-from agents.agent_6_cleanup import CleanupAgent
+from agents.agent_6_cleanup import CleanupAgent, expire_missing_files
 from agents.agent_7_notifier import TelegramNotifierAgent
 from brain import item_matches
 
@@ -53,6 +53,20 @@ class OrchestratorAgent:
             return [item for item in items if item.get("profile") == channel_key]
         return [item for item in items if item_matches(item, channel_key, profile)]
 
+    def expire_unfinishable(self, channel_key):
+        """Before counting today's videos, drop half-finished ones whose files were lost (e.g. a fresh GitHub run)."""
+        path = self.config["storage_paths"]["manifest_file"]
+        if not os.path.exists(path):
+            return
+        with open(path, "r", encoding="utf-8") as f:
+            items = json.load(f)
+        expired = expire_missing_files([i for i in items if i.get("profile") == channel_key])
+        if expired:
+            print(f"[Orchestrator] {expired} unfinished video(s) from an earlier run lost their files; "
+                  "marked expired so new ones are made instead.")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(items, f, indent=4, ensure_ascii=False)
+
     def run_format(self, config, channel_key, dry_run):
         """Find footage, narrate, edit and (unless a test run) upload one format's videos."""
         profile = config["profiles"][channel_key]
@@ -60,6 +74,7 @@ class OrchestratorAgent:
         wanted = profile["max_videos_per_run"]
         print(f"\n---------- {channel_key}: {wanted} {profile['format']} video(s) ----------")
 
+        self.expire_unfinishable(channel_key)
         scout = TrendScoutAgent(config, self.instructions)
         downloader = DownloaderAgent(paths["manifest_file"], paths["raw_downloads"], config)
         voiceover = VoiceoverAgent(config, self.instructions)

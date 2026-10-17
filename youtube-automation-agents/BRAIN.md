@@ -49,9 +49,10 @@ upload_rules:
   privacy_status: "public" # Default when a channel has no privacy_status of its own
   synthetic_media_disclosure: true
 
-cleanup_rules:
+cleanup_rules:                  # GitHub runs; laptop runs keep files in YouTube_Auto day folders instead
   delete_raw_after_publish: true
   delete_voiceover_after_publish: true
+  delete_edited_after_publish: true
   delete_edited_from_previous_dates: true
 ```
 
