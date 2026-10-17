@@ -16,6 +16,14 @@ storage_paths:
   processed_videos: "./GDrive_Mount/YouTube_Automation/03_edited_videos"
   archive_dir: "./GDrive_Mount/YouTube_Automation/04_published_archive"
 
+# Runs on your laptop or IDE put video files here instead, one folder per day:
+#   YouTube_Auto/<YYYY-MM-DD>/download  (source videos)  and  /upload  (narration + final videos)
+# Day folders older than keep_days are deleted automatically. GitHub runs keep using storage_paths above.
+local_media:
+  enabled: true
+  root: "H:/My Drive/YouTube_Auto"   # your Google Drive (Drive for Desktop); "~/YouTube_Auto" = your user folder instead
+  keep_days: 2
+
 editing_rules:
   zoom_factor: 1.06
   original_audio_volume: 0      # 0 = only the AI voice is heard; 0.05 = original sound faintly underneath

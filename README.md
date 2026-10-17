@@ -106,7 +106,7 @@ youtube-automation-agents/
 
 The scheduled workflow lives at the repository root in [.github/workflows/daily_youtube_agents.yml](.github/workflows/daily_youtube_agents.yml), because GitHub only runs workflows from there. It runs every step inside `youtube-automation-agents/`.
 
-Runtime data is written to `GDrive_Mount/YouTube_Automation/` (ignored by Git) and mirrored to the same folder in Google Drive:
+When run on a laptop or IDE, video files go to the Google Drive folder `H:/My Drive/YouTube_Auto/<YYYY-MM-DD>/download` and `/upload`, and day folders older than 2 days are deleted automatically (`local_media` in BRAIN.md). Shared state and GitHub runs use `GDrive_Mount/YouTube_Automation/` (ignored by Git), mirrored to the same folder in Google Drive:
 
 ```
 00_tokens/               # YouTube login per channel (token_<channel_key>.json)

@@ -210,6 +210,17 @@ It runs **every channel with `run: true`** using its answers in `questions.yaml`
 
 ---
 
+## Where Video Files Are Kept
+
+| Run from | Downloaded videos | Narration and final (uploaded) videos | Deleted |
+|---|---|---|---|
+| Your laptop / IDE / Copilot | `H:\My Drive\YouTube_Auto\<YYYY-MM-DD>\download\` (Google Drive) | `H:\My Drive\YouTube_Auto\<YYYY-MM-DD>\upload\` | Whole day folders older than 2 days, automatically at the end of each run |
+| GitHub | Temporary folders on GitHub's machine | Temporary folders on GitHub's machine | Right after upload; the machine is wiped after every run |
+
+Change the folder or the number of days under `local_media` in `BRAIN.md` (`root`, `keep_days`). If Google Drive for Desktop isn't running (no `H:` drive), that run uses `C:\Users\<you>\YouTube_Auto` instead. Files in the Google Drive folder count toward your Drive storage, so the 2-day limit also keeps Drive from filling up. To clear space by hand, delete any day folder you no longer need; videos from that day that weren't uploaded yet are skipped automatically.
+
+The manifest, YouTube logins and logos always stay in `GDrive_Mount/YouTube_Automation/`, because GitHub runs share them through Google Drive.
+
 ## Good to Know
 
 - **GitHub may start a run 5 to 30 minutes after `fetch_time`.** Go-live times are still exact, because YouTube publishes them.

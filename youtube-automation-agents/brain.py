@@ -51,7 +51,32 @@ def load_brain(brain_file=BRAIN_FILE, channels_file=CHANNELS_FILE, questions_fil
     config = yaml.safe_load(yaml_match.group(1))
     instructions = raw_md.split("## AGENT INSTRUCTIONS")[-1].strip()
     config["profiles"] = load_profiles(channels_file, questions_file)
+    apply_media_folders(config)
     return config, instructions
+
+
+def apply_media_folders(config):
+    """Local runs keep video files in <root>/<YYYY-MM-DD>/download and /upload, so whole days are easy to delete.
+
+    GitHub runs store nothing between runs, so they keep the storage_paths folders from BRAIN.md.
+    """
+    media = config.get("local_media") or {}
+    if os.getenv("GITHUB_ACTIONS") == "true" or not media.get("enabled", True):
+        config["storage_mode"] = "cloud"
+        return
+    root = os.path.normpath(os.path.expanduser(media.get("root", "~/YouTube_Auto")))
+    if not os.path.isdir(os.path.splitdrive(root)[0] + os.sep):
+        # e.g. Google Drive for Desktop isn't running, so its drive letter is missing
+        fallback = os.path.normpath(os.path.expanduser("~/YouTube_Auto"))
+        print(f"[Storage] {root} isn't available; using {fallback} for video files this run.")
+        root = fallback
+    day = os.path.join(root, datetime.now().strftime("%Y-%m-%d"))
+    paths = config["storage_paths"]
+    paths["raw_downloads"] = os.path.join(day, "download")
+    paths["audio_renders"] = os.path.join(day, "upload")
+    paths["processed_videos"] = os.path.join(day, "upload")
+    config["storage_mode"] = "local"
+    config["media_root"] = root
 
 
 def read_section(path, section):

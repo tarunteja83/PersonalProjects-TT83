@@ -116,6 +116,11 @@ class PublisherAgent:
         items_to_publish = [
             i for i in trends if i["status"] == "edited" and i["profile"] == self.active_key
         ]
+        # A finished video whose file was deleted (e.g. an old day folder) can't be uploaded any more
+        for item in [i for i in items_to_publish if not os.path.exists(i.get("edited_video_path") or "")]:
+            print(f"[Agent 5: Publisher] Skipping {item['video_id']}: its edited video file no longer exists.")
+            item["status"] = "expired"
+            items_to_publish.remove(item)
         if not items_to_publish:
             print("[Agent 5: Publisher] No edited videos pending upload.")
             return
