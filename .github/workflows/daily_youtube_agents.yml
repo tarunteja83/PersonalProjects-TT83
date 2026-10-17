@@ -4,7 +4,7 @@ on:
   schedule:
     # BEGIN CHANNEL SCHEDULE (fetch times from execution/questions.yaml, updated by: python execution/execution.py --check)
     - cron: '30 0 * * *'
-    - cron: '30 9 * * *'
+    - cron: '30 2 * * *'
     # END CHANNEL SCHEDULE
   workflow_dispatch:
     inputs:
@@ -36,6 +36,15 @@ on:
           - '30 mins'
           - '1 hour'
           - '3 hours'
+      format:
+        description: 'Which videos to make'
+        required: false
+        default: 'both'
+        type: choice
+        options:
+          - 'both'
+          - 'short'
+          - 'long'
       dry_run:
         description: 'Test run: make the videos but do not upload'
         required: false
@@ -135,6 +144,7 @@ jobs:
           VIDEOS: ${{ github.event.inputs.videos }}
           FIRST_POST: ${{ github.event.inputs.first_post_time }}
           FREQUENCY: ${{ github.event.inputs.frequency }}
+          FORMAT: ${{ github.event.inputs.format }}
           DRY_RUN: ${{ github.event.inputs.dry_run }}
         run: |
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
@@ -142,7 +152,7 @@ jobs:
             if [ "$DRY_RUN" = "true" ]; then EXTRA="--dry-run"; fi
             if [ "$FREQUENCY" = "from questions.yaml" ]; then FREQUENCY=""; fi
             python execution/execution.py --channel "$CHANNEL" --genre "$GENRE" --videos "$VIDEOS" \
-              --first-post "$FIRST_POST" --frequency "$FREQUENCY" $EXTRA
+              --first-post "$FIRST_POST" --frequency "$FREQUENCY" --format "${FORMAT:-both}" $EXTRA
           else
             python execution/execution.py --scheduled --cron "$TRIGGER_CRON"
           fi

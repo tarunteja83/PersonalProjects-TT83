@@ -10,10 +10,22 @@ from agents.agent_4_editor import VideoEditorAgent
 from agents.agent_5_publisher import PublisherAgent
 from agents.agent_6_cleanup import CleanupAgent
 from agents.agent_7_notifier import TelegramNotifierAgent
+from brain import item_matches
 
 # Footage can't always be found (no matching stock clips, or a restricted video), so look again a few times
 FIND_ATTEMPTS = 3
 READY_STATUSES = ("downloaded", "voiced", "edited")
+FORMATS = ("short", "long")
+
+
+def format_profile(profile, fmt):
+    """The channel's settings for one format: Shorts as answered, or the long-video answers (Q22 to Q24)."""
+    settings = copy.deepcopy(profile)
+    settings["format"] = fmt
+    if fmt == "long":
+        settings["max_videos_per_run"] = profile["long"]["count"]
+        settings["publish_plan"] = profile.get("long_publish_plan")
+    return settings
 
 
 class OrchestratorAgent:
@@ -31,28 +43,27 @@ class OrchestratorAgent:
         os.makedirs(paths["archive_dir"], exist_ok=True)
         os.makedirs(paths["tokens_dir"], exist_ok=True)
 
-    def manifest_items(self, channel_key):
+    def manifest_items(self, channel_key, profile=None):
         path = self.config["storage_paths"]["manifest_file"]
         if not os.path.exists(path):
             return []
         with open(path, "r", encoding="utf-8") as f:
-            return [item for item in json.load(f) if item.get("profile") == channel_key]
+            items = json.load(f)
+        if profile is None:
+            return [item for item in items if item.get("profile") == channel_key]
+        return [item for item in items if item_matches(item, channel_key, profile)]
 
-    def execute_pipeline(self, channel_key, dry_run=False):
-        """Run every agent for one channel and return the number of videos uploaded."""
-        config = copy.deepcopy(self.config)
-        config["active_profile"] = channel_key
+    def run_format(self, config, channel_key, dry_run):
+        """Find footage, narrate, edit and (unless a test run) upload one format's videos."""
+        profile = config["profiles"][channel_key]
         paths = config["storage_paths"]
-        wanted = config["profiles"][channel_key]["max_videos_per_run"]
-        published_before = {i["video_id"] for i in self.manifest_items(channel_key) if i["status"] == "published"}
-        print("====================================================")
-        print(f" ORCHESTRATOR STARTED | CHANNEL: {channel_key}" + (" | TEST RUN" if dry_run else ""))
-        print("====================================================")
+        wanted = profile["max_videos_per_run"]
+        print(f"\n---------- {channel_key}: {wanted} {profile['format']} video(s) ----------")
 
         scout = TrendScoutAgent(config, self.instructions)
         downloader = DownloaderAgent(paths["manifest_file"], paths["raw_downloads"], config)
         for attempt in range(FIND_ATTEMPTS):
-            ready = sum(1 for i in self.manifest_items(channel_key) if i["status"] in READY_STATUSES)
+            ready = sum(1 for i in self.manifest_items(channel_key, profile) if i["status"] in READY_STATUSES)
             if ready >= wanted:
                 break
             if attempt:
@@ -62,13 +73,32 @@ class OrchestratorAgent:
 
         VoiceoverAgent(config, self.instructions).run()
         VideoEditorAgent(config).run()
+        if not dry_run:
+            PublisherAgent(config, self.instructions).run()
+
+    def execute_pipeline(self, channel_key, dry_run=False, formats=FORMATS):
+        """Run every agent for one channel (Shorts, then long videos) and return the number of videos uploaded."""
+        base = self.config["profiles"][channel_key]
+        published_before = {i["video_id"] for i in self.manifest_items(channel_key) if i["status"] == "published"}
+        print("====================================================")
+        print(f" ORCHESTRATOR STARTED | CHANNEL: {channel_key}" + (" | TEST RUN" if dry_run else ""))
+        print("====================================================")
+
+        for fmt in formats:
+            if fmt == "long" and not base["long"]["count"]:
+                continue
+            config = copy.deepcopy(self.config)
+            config["active_profile"] = channel_key
+            config["profiles"][channel_key] = format_profile(base, fmt)
+            self.run_format(config, channel_key, dry_run)
 
         if dry_run:
             print("\n[Test run] Skipping upload, cleanup and Telegram alert.")
-            print(f"[Test run] Finished videos are in: {paths['processed_videos']}")
+            print(f"[Test run] Finished videos are in: {self.config['storage_paths']['processed_videos']}")
             return 0
 
-        PublisherAgent(config, self.instructions).run()
+        config = copy.deepcopy(self.config)
+        config["active_profile"] = channel_key
         CleanupAgent(config).run()
         TelegramNotifierAgent(config).run()
 
@@ -77,6 +107,7 @@ class OrchestratorAgent:
         print("\n====================================================")
         print(f" {channel_key}: {len(uploaded)} video(s) uploaded")
         for item in uploaded:
-            print(f"   https://youtube.com/shorts/{item.get('uploaded_youtube_id')}")
+            link = "shorts/" if item.get("format", "short") == "short" else "watch?v="
+            print(f"   https://youtube.com/{link}{item.get('uploaded_youtube_id')}  ({item.get('format', 'short')})")
         print("====================================================")
         return len(uploaded)

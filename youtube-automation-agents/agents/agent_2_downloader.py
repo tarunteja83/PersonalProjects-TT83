@@ -1,7 +1,13 @@
 import os
 import json
+import math
 import shutil
 import yt_dlp
+
+from brain import item_matches
+
+SECONDS_PER_LONG_CLIP = 15
+MAX_LONG_CLIPS = 28
 
 def ffmpeg_location():
     # yt-dlp needs FFmpeg to merge video and audio; fall back to the copy bundled with MoviePy when none is installed
@@ -30,16 +36,16 @@ class DownloaderAgent:
         with open(self.manifest_path, "r", encoding="utf-8") as f:
             trends = json.load(f)
 
-        stock = self.footage.get("source", "stock") == "stock"
+        profile = self.config["profiles"][active_profile]
+        stock = self.footage.get("source", "stock") == "stock" or profile.get("format") == "long"
         if stock:
             from google import genai
             from agents import stock_footage
             provider, api_key = stock_footage.choose_provider(self.footage.get("provider", "auto"))
             ai_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-            profile = self.config["profiles"][active_profile]
 
         for item in trends:
-            if item["status"] == "discovered" and item["profile"] == active_profile:
+            if item["status"] == "discovered" and item_matches(item, active_profile, profile):
                 vid_id = item["video_id"]
                 if stock:
                     self.fetch_stock(item, stock_footage, provider, api_key, ai_client, profile)
@@ -56,14 +62,23 @@ class DownloaderAgent:
                   "to .env / GitHub secrets.")
             item["status"] = "download_failed"
             return
-        count = int(self.footage.get("clips_per_video", 3))
-        terms = stock_footage.search_terms(ai_client, item, profile, self.config.get("ai_models"), count)
+        if item.get("format") == "long":
+            # About one clip every SECONDS_PER_LONG_CLIP seconds, three clips per search term
+            clips = min(MAX_LONG_CLIPS, math.ceil(item.get("target_seconds", 360) / SECONDS_PER_LONG_CLIP))
+            per_term, orientation = 3, "landscape"
+            term_count = math.ceil(clips / per_term)
+        else:
+            per_term, orientation = 1, "portrait"
+            term_count = int(self.footage.get("clips_per_video", 3))
+        terms = stock_footage.search_terms(ai_client, item, profile, self.config.get("ai_models"), term_count)
         print(f"[Agent 2: Downloader] Stock footage for '{item['original_title'][:60]}': {', '.join(terms)}")
         try:
             paths, credits = stock_footage.fetch_clips(provider, api_key, terms, self.download_dir,
-                                                       f"stock_{vid_id}", kids=profile.get("made_for_kids", False))
+                                                       f"stock_{vid_id}", kids=profile.get("made_for_kids", False),
+                                                       style=profile.get("footage_style", "any"),
+                                                       orientation=orientation, clips_per_term=per_term)
         except Exception as e:
-            print(f"[Agent 2: Downloader] Stock footage failed for {vid_id}: {e}")
+            print(f"[Agent 2: Downloader] Stock footage failed for {vid_id}: {stock_footage.safe_error(e, api_key)}")
             paths, credits = [], []
         if paths:
             item["footage_paths"] = paths

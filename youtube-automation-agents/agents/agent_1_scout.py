@@ -1,6 +1,7 @@
 import os
 import html
 import json
+import random
 from datetime import datetime, timedelta, timezone
 from googleapiclient.discovery import build
 
@@ -26,11 +27,13 @@ class TrendScoutAgent:
     def search(self, query, published_after):
         # Cached per run: retries reuse the same results instead of spending more of the daily search quota
         if query not in self.search_cache:
+            long_form = self.profile.get("format") == "long"
             params = dict(
                 part="snippet",
-                q=query,
+                # Long videos take their topics from longer trending videos (4 to 20 minutes)
+                q=query.replace("#shorts", "").strip() if long_form else query,
                 type="video",
-                videoDuration="short",
+                videoDuration="medium" if long_form else "short",
                 order="viewCount",
                 publishedAfter=published_after,
                 maxResults=50,  # same quota cost as 1, and leaves room to skip used or repeated sources
@@ -108,9 +111,18 @@ class TrendScoutAgent:
 
     def entry(self, item, query):
         vid_id = item["id"]["videoId"]
+        entry_format = self.profile.get("format", "short")
+        minutes = self.profile.get("long", {}).get("minutes", 6)
+        if entry_format == "long":
+            # "5-7" gives every long video its own length between 5 and 7 minutes
+            target_seconds = random.randint(300, 420) if minutes == "5-7" else int(minutes) * 60
+        else:
+            target_seconds = self.profile.get("target_duration_seconds", 30)
         return {
             "video_id": vid_id,
             "profile": self.active_key,
+            "format": entry_format,
+            "target_seconds": target_seconds,
             "genre": query,
             # The search API returns HTML-escaped text (e.g. &#39; and &amp;)
             "original_title": html.unescape(item["snippet"]["title"]),

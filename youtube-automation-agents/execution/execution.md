@@ -46,6 +46,19 @@ Example: `fetch_time "06:00"`, `first_post_time "07:00"`, `post_frequency "1 hou
 | `"1 hour"` | 07:00, 08:00 … 18:00 |
 | `"3 hours"` | 07:00, 10:00 … 16:00 the next day (too long, so `--check` warns you) |
 
+**Long videos (Q22 to Q24)** are made in the same run, after the Shorts:
+
+| | Shorts | Long videos |
+|---|---|---|
+| Shape | Vertical 1080×1920 | Landscape 1920×1080 |
+| Length | `video_length_seconds` (15 to 60 s) | `long_video_minutes` (5 to 7 min) |
+| Topics from | Trending Shorts | Trending 4 to 20 minute videos on the same search phrases |
+| Script | Hook plus one idea | Hook, 3 to 5 parts, recap and a question for comments |
+| Footage | 3 clips | About one clip every 15 seconds (20 to 28 clips) |
+| Goes live | `first_post_time`, then every `post_frequency` | At each `long_post_times` entry |
+
+A long video takes roughly 5 minutes to build on GitHub (videos are assembled with FFmpeg for speed). `--check` estimates the monthly GitHub time for all your answers.
+
 **Every video looks and sounds the same way:**
 - **Audio:** only the AI narration; the source video's own sound is removed.
 - **Watermark:** in the bottom-right corner.
@@ -81,6 +94,10 @@ If preparing the videos takes longer than planned, the next free slot is used au
 | Q18 | Who can see the videos | `visibility` | `"public"` \| `"unlisted"` \| `"private"` |
 | Q19 | Make videos without uploading | `test_run` | `true` \| `false` |
 | Q20 | YouTube channels never to take videos from | `exclude_sources` | `[]` or `["Channel Name 1", "Channel Name 2"]` |
+| Q22 | Long landscape videos per day | `long_videos_per_day` | `0` (none) to `4` |
+| Q23 | Length of each long video | `long_video_minutes` | `5` \| `6` \| `7` \| `"5-7"` (a different length each video) |
+| Q24 | When each long video goes live | `long_post_times` | one `"HH:MM"` per long video, e.g. `["14:00", "20:00"]` |
+| Q21 | Kind of stock clips used | `footage_style` | `"any"` \| `"animation"` (cartoon) \| `"film"` (real footage) \| `"mixed"` (cartoon and real alternate). Pixabay only; Pexels has no cartoon filter. |
 
 **How source videos are picked:** each run starts from the next search phrase in turn and takes the most-viewed recent Short from each phrase in rotation. Searches favour videos in the channel's language. It takes **at most one video per source channel per run**, avoids channels used for any of that channel's last 5 videos, and never uses channels in `exclude_sources`. This keeps one big channel from supplying everything.
 
@@ -174,6 +191,7 @@ GitHub → **Actions** → **Daily YouTube Multi-Agent Pipeline** → **Run work
 | `videos` | One-off number of videos |
 | `first_post_time` | One-off first go-live time (`HH:MM`) |
 | `frequency` | One-off gap: 15 mins, 30 mins, 1 hour or 3 hours |
+| `format` | `both` (default), `short` (Shorts only) or `long` (long videos only) |
 | `dry_run` | Tick to make videos without uploading |
 
 ### IDE, terminal or Copilot
@@ -208,6 +226,7 @@ It runs **every channel with `run: true`** using its answers in `questions.yaml`
 | `... --post-now` | One-off: every video goes live as soon as it is uploaded |
 | `... --visibility unlisted` | One-off visibility: `public`, `unlisted` or `private` |
 | `... --dry-run` | Make videos, don't upload |
+| `... --format short` / `--format long` | Make only Shorts, or only long videos (default: both) |
 | `python execution/execution.py --ask` | Answer the questions on screen for a one-off run |
 | `python execution/execution.py --check` | Validate both files, show plans and YouTube usage, update the GitHub schedule |
 | `python execution/execution.py --list` | Show channels, plans and YouTube login status |
@@ -242,7 +261,7 @@ The manifest, YouTube logins and logos always stay in `GDrive_Mount/YouTube_Auto
 - **GitHub may start a run 5 to 30 minutes after `fetch_time`.** Go-live times are still exact, because YouTube publishes them.
 - **The workflow file stores times in UTC**, so 06:00 IST appears as `30 0 * * *`. `--check` handles this.
 - **Daylight saving:** India has none. For timezones that do, run `--check` and push after each clock change.
-- **GitHub free minutes:** private repos get 2,000 a month. Preparing each video takes about 2 to 3 minutes, so 12 videos a day uses roughly 900 to 1,100 minutes a month. Making the repository public removes the limit.
+- **GitHub free minutes:** private repos get 2,000 a month. A Short takes about 2 minutes to build and a long video about 5. Run `--check` to see the estimate for your answers. If it's near or over 2,000, lower the counts or make the repository public; public repos have unlimited free minutes, and your keys stay safe in GitHub secrets either way.
 - **Test-run videos are kept** at "edited" and are uploaded by that channel's next real run.
 
 ## Troubleshooting

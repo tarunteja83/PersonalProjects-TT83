@@ -29,6 +29,9 @@ DEFAULT_VOICES = {
 SPEEDS = ["-15%", "-5%", "+0%", "+10%"]
 VIDEO_LENGTHS = [15, 30, 45, 60]
 VISIBILITIES = ["public", "unlisted", "private"]
+FOOTAGE_STYLES = ["any", "animation", "film", "mixed"]
+LONG_MINUTES = [5, 6, 7, "5-7"]
+MAX_LONG_VIDEOS_PER_DAY = 4
 MAX_VIDEOS_PER_DAY = 50
 # Upload videos, and read which channel a login belongs to (checked before every upload)
 YOUTUBE_SCOPES = [
@@ -127,6 +130,7 @@ def build_profile(channel, answers):
         "privacy_status": a.get("visibility") or "public",
         "test_run": bool(a.get("test_run", False)),
         "exclude_sources": a.get("exclude_sources") or [],
+        "footage_style": a.get("footage_style") or "any",
         "schedule": {
             "timezone": a.get("timezone") or DEFAULT_TIMEZONE,
             "post_times": [a["fetch_time"]] if a.get("fetch_time") else [],
@@ -135,6 +139,12 @@ def build_profile(channel, answers):
         "posting": {
             "first_post_time": a.get("first_post_time"),
             "frequency_minutes": FREQUENCIES.get(a.get("post_frequency") or "1 hour", 60),
+        },
+        # Long (landscape, 5 to 7 minute) videos, prepared in the same run as the Shorts
+        "long": {
+            "count": int(a.get("long_videos_per_day") or 0),
+            "minutes": a.get("long_video_minutes") or 6,
+            "post_times": [str(t) for t in (a.get("long_post_times") or [])],
         },
     }
 
@@ -159,6 +169,11 @@ def validate_channels(channels):
             problems.append(f"{where}: channel_url must look like https://www.youtube.com/@handle "
                             "or https://www.youtube.com/channel/UC...")
     return problems
+
+
+def item_matches(item, channel_key, profile):
+    """True if a manifest item belongs to this channel and to the format (short or long) being processed."""
+    return item.get("profile") == channel_key and item.get("format", "short") == profile.get("format", "short")
 
 
 def parse_channel_url(url):
@@ -202,7 +217,7 @@ def validate_answers(answers, channels):
                 problems.append(f"{where}: voice '{voice}' does not speak {language}; pick a {LANGUAGES[language]}... voice")
         checks = [
             ("voice_speed", SPEEDS), ("video_length_seconds", VIDEO_LENGTHS),
-            ("post_frequency", list(FREQUENCIES)), ("visibility", VISIBILITIES),
+            ("post_frequency", list(FREQUENCIES)), ("visibility", VISIBILITIES), ("footage_style", FOOTAGE_STYLES),
         ]
         for field, allowed in checks:
             if a.get(field) is not None and a[field] not in allowed:
@@ -214,6 +229,23 @@ def validate_answers(answers, channels):
         videos = a.get("videos_per_day")
         if videos is not None and not (isinstance(videos, int) and 1 <= videos <= MAX_VIDEOS_PER_DAY):
             problems.append(f"{where}: videos_per_day must be a whole number from 1 to {MAX_VIDEOS_PER_DAY}")
+        long_count = a.get("long_videos_per_day")
+        if long_count is not None and not (isinstance(long_count, int) and 0 <= long_count <= MAX_LONG_VIDEOS_PER_DAY):
+            problems.append(f"{where}: long_videos_per_day must be a whole number from 0 to {MAX_LONG_VIDEOS_PER_DAY}")
+        if a.get("long_video_minutes") is not None and a["long_video_minutes"] not in LONG_MINUTES:
+            problems.append(f'{where}: long_video_minutes must be one of 5, 6, 7 or "5-7"')
+        long_times = a.get("long_post_times") or []
+        if not isinstance(long_times, list):
+            problems.append(f'{where}: long_post_times must be a list, e.g. ["13:00", "19:00"]')
+            long_times = []
+        for t in long_times:
+            try:
+                parse_time(t)
+            except ValueError:
+                problems.append(f"{where}: long post time '{t}' must be HH:MM in 24-hour format, in quotes")
+        if isinstance(long_count, int) and long_count > len(long_times):
+            problems.append(f"{where}: give one long_post_times entry per long video "
+                            f"({long_count} needed, {len(long_times)} given)")
         lookback = a.get("lookback_days")
         if lookback is not None and not (isinstance(lookback, int) and 1 <= lookback <= 30):
             problems.append(f"{where}: lookback_days must be a whole number from 1 to 30")

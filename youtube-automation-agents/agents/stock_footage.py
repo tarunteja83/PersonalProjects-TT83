@@ -6,6 +6,7 @@ are free to use. Both ask that you show where the footage came from, so each des
 footage.provider in BRAIN.md: "pixabay", "pexels", or "auto" (whichever has a key: PIXABAY_API_KEY, then PEXELS_API_KEY).
 """
 import os
+import time
 
 import requests
 
@@ -17,8 +18,26 @@ PROVIDERS = {
 }
 PEXELS_URLS = ["https://api.pexels.com/videos/search", "https://api.pexels.com/v1/videos/search"]
 PIXABAY_URL = "https://pixabay.com/api/videos/"
-TARGET_HEIGHT = 1920
 MAX_DOWNLOAD_BYTES = 80 * 1024 * 1024
+# The ideal clip height for each output shape: Shorts are 1080x1920, long videos 1920x1080
+TARGET_HEIGHT = {"portrait": 1920, "landscape": 1080}
+
+
+def safe_error(error, api_key):
+    # Pixabay puts the key in the request URL, so error messages must never be printed with it
+    return str(error).replace(api_key, "***") if api_key else str(error)
+
+
+def with_retries(action, attempts=3):
+    """Run action(), retrying dropped connections and rate limits with a growing pause."""
+    for attempt in range(attempts):
+        try:
+            return action()
+        except requests.RequestException as e:
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if attempt == attempts - 1 or (status is not None and status < 500 and status != 429):
+                raise
+            time.sleep(5 * (attempt + 1))
 
 
 def choose_provider(setting="auto"):
@@ -38,6 +57,8 @@ def search_terms(ai_client, item, profile, models, count):
         f"Context: {item['original_description'][:300]}\n"
         f"Channel niche: {profile.get('niche', '')}\n"
         + ("The audience is young children, so keep every term child-friendly.\n" if profile.get("made_for_kids") else "")
+        + ("Some clips will be cartoon animation, so terms like 'cartoon cat' or 'animated forest' are good.\n"
+           if profile.get("footage_style") in ("animation", "mixed") else "")
         + f"Give {count} different stock-footage search terms in English (1 to 3 words each) for visuals that "
         "match this topic. Avoid graphic violence. Output ONLY the terms, comma-separated."
     )
@@ -48,87 +69,132 @@ def search_terms(ai_client, item, profile, models, count):
         print(f"[Stock footage] Could not get search terms from Gemini ({e}); using the channel niche.")
         terms = []
     fallback = [w for w in profile.get("niche", "").replace(",", " ").split() if len(w) > 3]
-    return (terms + fallback + ["city", "nature", "people"])[:count]
+    return list(dict.fromkeys(terms + fallback + ["city", "nature", "people", "sky", "abstract"]))[:count]
 
 
 # ---------- Pexels ----------
 
-def pick_file(video):
-    """Pexels: choose the MP4 rendition closest to 1080x1920 without being smaller than 720p."""
+def pick_file(video, orientation="portrait"):
+    """Pexels: choose the MP4 rendition closest to the target height without going below 720p."""
     files = [f for f in video.get("video_files", [])
              if f.get("file_type") == "video/mp4" and f.get("height") and f.get("link")]
-    usable = [f for f in files if f["height"] >= 1280] or files
-    return min(usable, key=lambda f: abs(f["height"] - TARGET_HEIGHT)) if usable else None
+    usable = [f for f in files if min(f["height"], f.get("width") or f["height"]) >= 720] or files
+    target = TARGET_HEIGHT[orientation]
+    return min(usable, key=lambda f: abs(f["height"] - target)) if usable else None
 
 
-def find_pexels(api_key, term, used_ids, kids):
-    params = {"query": term, "orientation": "portrait", "size": "medium", "per_page": 15}
+def pexels_candidates(api_key, term, kids, video_type, orientation):
+    # Pexels has no animation filter, so video_type is ignored here
+    params = {"query": term, "orientation": orientation, "size": "medium", "per_page": 30}
     for url in PEXELS_URLS:
         response = requests.get(url, headers={"Authorization": api_key}, params=params, timeout=30)
         if response.status_code == 404:
             continue
         response.raise_for_status()
-        for video in response.json().get("videos", []):
-            if video["id"] not in used_ids and video.get("duration", 0) >= 3 and pick_file(video):
-                return video["id"], pick_file(video)["link"], video.get("user", {}).get("name", "Pexels")
-        return None
-    return None
+        return [(v["id"], pick_file(v, orientation)["link"], v.get("user", {}).get("name", "Pexels"))
+                for v in response.json().get("videos", []) if v.get("duration", 0) >= 3 and pick_file(v, orientation)]
+    return []
 
 
 # ---------- Pixabay ----------
 
-def pick_rendition(renditions):
-    """Pixabay: portrait -> closest to 1920 tall; landscape -> the tallest version under the size cap (cropped later)."""
+def pick_rendition(renditions, orientation="portrait"):
+    """Pixabay: pick the version that best fills the output frame after cropping, within the size cap."""
     usable = [r for r in renditions.values() if r.get("url") and r.get("height")]
     if not usable:
         return None
-    if any(r["height"] > r["width"] for r in usable):
-        return min(usable, key=lambda r: abs(r["height"] - TARGET_HEIGHT))
+    portrait_clip = any(r["height"] > r["width"] for r in usable)
+    if orientation == "landscape" or portrait_clip:
+        # Already the right shape (or portrait for a Short): closest to the target height
+        target = TARGET_HEIGHT[orientation]
+        return min(usable, key=lambda r: abs(r["height"] - target))
+    # Landscape clip for a vertical Short: the tallest version under the cap keeps the centre crop sharp
     small_enough = [r for r in usable if 0 < r.get("size", 0) <= MAX_DOWNLOAD_BYTES] or usable
     return max(small_enough, key=lambda r: r["height"])
 
 
-def find_pixabay(api_key, term, used_ids, kids):
+def pixabay_candidates(api_key, term, kids, video_type, orientation):
     params = {"key": api_key, "q": term[:100], "per_page": 30, "order": "popular",
               "safesearch": "true" if kids else "false"}
+    if video_type in ("animation", "film"):
+        params["video_type"] = video_type
     response = requests.get(PIXABAY_URL, params=params, timeout=30)
     response.raise_for_status()
-    hits = [h for h in response.json().get("hits", []) if h["id"] not in used_ids and h.get("duration", 0) >= 3]
-    # Prefer clips that are already vertical; landscape ones are centre-cropped by the editor
-    hits.sort(key=lambda h: 0 if (h["videos"].get("medium", {}).get("height", 0)
-                                 > h["videos"].get("medium", {}).get("width", 1)) else 1)
+    hits = [h for h in response.json().get("hits", []) if h.get("duration", 0) >= 3]
+
+    def is_portrait(hit):
+        medium = hit["videos"].get("medium", {})
+        return medium.get("height", 0) > medium.get("width", 1)
+
+    # Prefer clips that already match the output shape; others are centre-cropped by the editor
+    hits.sort(key=lambda h: 0 if is_portrait(h) == (orientation == "portrait") else 1)
+    found = []
     for hit in hits:
-        rendition = pick_rendition(hit["videos"])
+        rendition = pick_rendition(hit["videos"], orientation)
         if rendition:
-            return hit["id"], rendition["url"], hit.get("user", "Pixabay")
-    return None
+            found.append((hit["id"], rendition["url"], hit.get("user", "Pixabay")))
+    return found
 
 
-FINDERS = {"pexels": find_pexels, "pixabay": find_pixabay}
+CANDIDATES = {"pexels": pexels_candidates, "pixabay": pixabay_candidates}
 
 
-def fetch_clips(provider, api_key, terms, destination_dir, prefix, kids=False):
-    """Download one clip per search term. Returns (file paths, contributor credits)."""
+def clip_type(style, index):
+    """footage_style -> Pixabay video_type for the index-th clip ("mixed" alternates cartoon and real)."""
+    if style == "mixed":
+        return "animation" if index % 2 == 0 else "film"
+    return style if style in ("animation", "film") else None
+
+
+def fetch_clips(provider, api_key, terms, destination_dir, prefix, kids=False, style="any",
+                orientation="portrait", clips_per_term=1):
+    """Download clips_per_term clips for each search term. Returns (file paths, contributor credits).
+
+    Each term is searched once and several clips are taken from its results, to keep API requests low.
+    """
     os.makedirs(destination_dir, exist_ok=True)
-    paths, credits, used_ids = [], [], set()
-    for index, term in enumerate(terms):
-        try:
-            found = FINDERS[provider](api_key, term, used_ids, kids)
-        except requests.RequestException as e:
-            print(f"[Stock footage] {PROVIDERS[provider]['name']} search failed for '{term}': {e}")
-            continue
-        if not found:
-            print(f"[Stock footage] No clip found for '{term}'.")
-            continue
-        clip_id, url, credit = found
-        used_ids.add(clip_id)
-        target = os.path.join(destination_dir, f"{prefix}_clip{index + 1}.mp4")
-        with requests.get(url, stream=True, timeout=180) as download:
-            download.raise_for_status()
+    paths, credits, used_ids, cache = [], [], set(), {}
+
+    def candidates(term, video_type):
+        if (term, video_type) not in cache:
+            cache[(term, video_type)] = with_retries(
+                lambda: CANDIDATES[provider](api_key, term, kids, video_type, orientation))
+        return cache[(term, video_type)]
+
+    def download(url, target):
+        with requests.get(url, stream=True, timeout=180) as response:
+            response.raise_for_status()
             with open(target, "wb") as f:
-                for chunk in download.iter_content(chunk_size=1 << 20):
+                for chunk in response.iter_content(chunk_size=1 << 20):
                     f.write(chunk)
-        paths.append(target)
-        credits.append(credit)
-        print(f"[Stock footage] '{term}' -> {PROVIDERS[provider]['name']} video {clip_id} by {credit}")
+
+    index = 0
+    for term in terms:
+        for _ in range(clips_per_term):
+            wanted = clip_type(style, index)
+            try:
+                pool = [c for c in candidates(term, wanted) if c[0] not in used_ids]
+                if not pool and wanted:
+                    # e.g. no cartoon clip for this term: take any kind of clip instead
+                    pool = [c for c in candidates(term, None) if c[0] not in used_ids]
+            except requests.RequestException as e:
+                print(f"[Stock footage] {PROVIDERS[provider]['name']} search failed for '{term}': "
+                      f"{safe_error(e, api_key)}")
+                break
+            if not pool:
+                print(f"[Stock footage] No more clips for '{term}'.")
+                break
+            clip_id, url, credit = pool[0]
+            used_ids.add(clip_id)
+            index += 1
+            target = os.path.join(destination_dir, f"{prefix}_clip{index}.mp4")
+            try:
+                with_retries(lambda: download(url, target))
+            except requests.RequestException as e:
+                print(f"[Stock footage] Download failed for {PROVIDERS[provider]['name']} video {clip_id}: "
+                      f"{safe_error(e, api_key)}")
+                continue
+            paths.append(target)
+            credits.append(credit)
+            print(f"[Stock footage] '{term}' -> {PROVIDERS[provider]['name']} video {clip_id} by {credit}")
     return paths, credits

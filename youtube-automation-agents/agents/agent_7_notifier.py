@@ -69,7 +69,8 @@ class TelegramNotifierAgent:
 
         for idx, item in enumerate(published_today, 1):
             yt_id = item.get("uploaded_youtube_id")
-            yt_url = f"https://youtube.com/shorts/{yt_id}" if yt_id else item.get("source_url")
+            path = "watch?v=" if item.get("format") == "long" else "shorts/"
+            yt_url = f"https://youtube.com/{path}{yt_id}" if yt_id else item.get("source_url")
             clean_source = item.get("original_creator", "Unknown").replace("@", "")
             lines.append(
                 f"<b>{idx}. {item.get('original_title')[:55]}...</b>\n"

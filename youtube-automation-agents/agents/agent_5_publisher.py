@@ -6,10 +6,15 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
+import time
 
 from agents.ai import generate_text
-from brain import YOUTUBE_SCOPES as SCOPES, channel_matches
+from brain import YOUTUBE_SCOPES as SCOPES, channel_matches, item_matches
+
+UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
+UPLOAD_RETRIES = 5
 
 class PublisherAgent:
     def __init__(self, config, instructions):
@@ -72,12 +77,16 @@ class PublisherAgent:
             f"Original Title: {item['original_title']}\n"
             f"Our Voiceover Script: {item['generated_script']}\n"
             f"Language for title, description and hashtags: {self.profile.get('language', 'English')}\n\n"
-            "Generate a viral YouTube Short Title (maximum 60 characters, no quotes) on Line 1.\n"
-            "On the following lines, write a 2-sentence SEO description followed by 5 relevant hashtags."
+            + ("Generate a click-worthy YouTube video title (maximum 70 characters, no quotes) on Line 1.\n"
+               "On the following lines, write a 3-sentence SEO description followed by 5 relevant hashtags "
+               "(do not use #shorts)."
+               if item.get("format") == "long" else
+               "Generate a viral YouTube Short Title (maximum 60 characters, no quotes) on Line 1.\n"
+               "On the following lines, write a 2-sentence SEO description followed by 5 relevant hashtags.")
         )
         resp = generate_text(self.ai_client, prompt, self.config.get("ai_models")).split("\n")
 
-        new_title = resp[0].replace('"', '').strip()[:65]
+        new_title = resp[0].replace('"', '').strip()[:75 if item.get("format") == "long" else 65]
         seo_body = "\n".join(resp[1:]).strip()
 
         if item.get("footage_paths"):
@@ -98,15 +107,48 @@ class PublisherAgent:
 
         return new_title, f"{seo_body}{credit_block}"
 
+    @staticmethod
+    def upload(youtube, path, body):
+        """Upload in 8 MB chunks, resuming after dropped connections, so long videos survive a shaky network."""
+        media = MediaFileUpload(path, chunksize=UPLOAD_CHUNK_BYTES, resumable=True)
+        request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+        response, failures = None, 0
+        while response is None:
+            try:
+                status, response = request.next_chunk()
+                failures = 0
+                if status:
+                    print(f"[Agent 5: Publisher] Uploaded {int(status.progress() * 100)}%")
+            except (HttpError, OSError) as e:
+                retryable = not isinstance(e, HttpError) or e.resp.status in (500, 502, 503, 504)
+                failures += 1
+                if not retryable or failures > UPLOAD_RETRIES:
+                    raise
+                print(f"[Agent 5: Publisher] Upload interrupted ({e}); resuming in {10 * failures}s...")
+                time.sleep(10 * failures)
+        return response
+
     def scheduled_publish_time(self, index, now=None):
         """Go-live time for the index-th video of this run, or None to publish immediately.
 
-        execution.py sets publish_plan = {"first_utc": ISO time, "interval_minutes": gap}. Slots repeat every
-        interval from first_utc; if preparing the videos took past some slots, the next future slot is used.
+        execution.py sets publish_plan to either
+          {"first_utc": ISO time, "interval_minutes": gap}: slots repeat every interval from first_utc, and if
+          preparing the videos took past some slots, the next future slot is used (Shorts); or
+          {"times_utc": [ISO times]}: one fixed time per video, moved to the next day if already past (long videos).
         """
         plan = self.profile.get("publish_plan")
         if not plan:
             return None
+        if "times_utc" in plan:
+            earliest = (now or datetime.now(timezone.utc)) + timedelta(minutes=10)
+            # Move any time that has already passed to the next day, then hand out the free slots in order
+            upcoming = []
+            for t in (datetime.fromisoformat(t) for t in plan["times_utc"]):
+                while t < earliest:
+                    t += timedelta(days=1)
+                upcoming.append(t)
+            upcoming.sort()
+            return upcoming[index % len(upcoming)] + timedelta(days=index // len(upcoming))
         first = datetime.fromisoformat(plan["first_utc"])
         interval = timedelta(minutes=plan.get("interval_minutes") or 0)
         earliest = (now or datetime.now(timezone.utc)) + timedelta(minutes=10)
@@ -124,7 +166,7 @@ class PublisherAgent:
             trends = json.load(f)
 
         items_to_publish = [
-            i for i in trends if i["status"] == "edited" and i["profile"] == self.active_key
+            i for i in trends if i["status"] == "edited" and item_matches(i, self.active_key, self.profile)
         ]
         # A finished video whose file was deleted (e.g. an old day folder) can't be uploaded any more
         for item in [i for i in items_to_publish if not os.path.exists(i.get("edited_video_path") or "")]:
@@ -139,14 +181,20 @@ class PublisherAgent:
 
         for index, item in enumerate(items_to_publish):
             vid_id = item["video_id"]
-            title, description = self.generate_seo_package(item)
+            try:
+                title, description = self.generate_seo_package(item)
+            except Exception as e:
+                # The video stays "edited" and is uploaded on the next run
+                print(f"[Agent 5: Publisher] Could not write the title for {vid_id}, will retry next run: {e}")
+                continue
 
             body = {
                 "snippet": {
                     "title": title,
                     "description": description,
                     "categoryId": self.profile["category_id"],
-                    "tags": ["shorts", self.active_key, self.profile["channel_name"].replace(" ", "")]
+                    "tags": ([] if item.get("format") == "long" else ["shorts"])
+                            + [self.active_key, self.profile["channel_name"].replace(" ", "")]
                 },
                 "status": {
                     "privacyStatus": self.profile.get("privacy_status", self.upload_rules["privacy_status"]),
@@ -164,10 +212,7 @@ class PublisherAgent:
 
             print(f"\n[Agent 5: Publisher] Uploading '{title}' to {self.profile['channel_name']}...")
             try:
-                media = MediaFileUpload(item["edited_video_path"], chunksize=-1, resumable=True)
-                request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
-                response = request.execute()
-
+                response = self.upload(youtube, item["edited_video_path"], body)
                 item["uploaded_youtube_id"] = response["id"]
                 item["status"] = "published"
                 print(f"[Agent 5: Publisher] SUCCESS! Uploaded Video ID: {response['id']}")

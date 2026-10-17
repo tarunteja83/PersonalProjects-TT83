@@ -21,7 +21,7 @@ Everything is driven by two pages and one file:
 
 **Start with [execution/execution.md](youtube-automation-agents/execution/execution.md)**: it has setup, rules and every command.
 
-Each day, at a channel's fetch time, the pipeline prepares that day's videos and uploads them with staggered go-live times. YouTube then publishes one every 15 mins, 30 mins, 1 hour or 3 hours. Narration supports English, Hindi and Telugu.
+Each day, at a channel's fetch time, the pipeline prepares that day's videos and uploads them with staggered go-live times. YouTube then publishes one Short every 15 mins, 30 mins, 1 hour or 3 hours, plus up to 4 landscape **long videos (5 to 7 minutes)** at set times. Narration supports English, Hindi and Telugu. Stock footage can be real, cartoon animation, or a mix.
 
 | Channel key | Channel | Audience | Language and voice | Posting (IST) |
 |---|---|---|---|---|

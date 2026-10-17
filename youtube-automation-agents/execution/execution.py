@@ -39,6 +39,11 @@ SCHEDULE_END = "# END CHANNEL SCHEDULE"
 RUNNING_ON_GITHUB = os.getenv("GITHUB_ACTIONS") == "true"
 DAILY_UPLOAD_LIMIT = 100
 DAILY_SEARCH_LIMIT = 100
+# Rough GitHub Actions build times, used only for the --check estimate
+GITHUB_SETUP_MINUTES = 3
+MINUTES_PER_SHORT = 2
+MINUTES_PER_LONG = 5
+GITHUB_FREE_MINUTES = 2000
 
 VOICE_CHOICES = {
     "English": ["en-US-AndrewNeural", "en-US-ChristopherNeural", "en-US-GuyNeural", "en-US-AriaNeural",
@@ -142,8 +147,12 @@ def apply_overrides(profile, overrides):
         profile["posting"]["frequency_minutes"] = FREQUENCIES[overrides["frequency"]]
     if overrides.get("first_post"):
         profile["posting"]["first_post_time"] = overrides["first_post"]
+    if overrides.get("videos") and profile["long"]["count"]:
+        # --videos N means at most N of each format
+        profile["long"]["count"] = min(profile["long"]["count"], overrides["videos"])
     if overrides.get("post_now"):
         profile["posting"]["first_post_time"] = None
+        profile["long"]["post_times"] = []
 
 
 def publish_plan(profile, now=None):
@@ -164,6 +173,31 @@ def publish_plan(profile, now=None):
         "first_utc": first_local.astimezone(timezone.utc).isoformat(),
         "interval_minutes": profile["posting"]["frequency_minutes"],
     }
+
+
+def long_publish_plan(profile, now=None):
+    """One fixed go-live time per long video (long_post_times); times already past move to the next day."""
+    long = profile["long"]
+    if not long["count"] or not long["post_times"]:
+        return None
+    tz = ZoneInfo(profile["schedule"]["timezone"])
+    now_local = (now or datetime.now(tz)).astimezone(tz)
+    times = []
+    for post_time in long["post_times"][:long["count"]]:
+        local = datetime.combine(now_local.date(), parse_time(post_time), tzinfo=tz)
+        if local <= now_local:
+            local += timedelta(days=1)
+        times.append(local.astimezone(timezone.utc))
+    return {"times_utc": [t.isoformat() for t in sorted(times)]}
+
+
+def describe_long(profile):
+    long = profile["long"]
+    if not long["count"]:
+        return "no long videos"
+    minutes = "5 to 7" if long["minutes"] == "5-7" else str(long["minutes"])
+    return (f"{long['count']} long landscape video(s) of {minutes} min, live at "
+            f"{', '.join(long['post_times'][:long['count']])}")
 
 
 def describe_plan(profile):
@@ -218,7 +252,7 @@ def preflight(config, keys, dry_runs):
     return ready
 
 
-def run_channels(config, instructions, keys, overrides=None, force_dry_run=False):
+def run_channels(config, instructions, keys, overrides=None, force_dry_run=False, formats=("short", "long")):
     from dotenv import load_dotenv
     load_dotenv(os.path.join(PROJECT_DIR, ".env"))
 
@@ -236,10 +270,12 @@ def run_channels(config, instructions, keys, overrides=None, force_dry_run=False
     failed, results = [], {}
     for key in ready:
         profile = config["profiles"][key]
-        print(f"\n>>> {key}: {describe_plan(profile)}")
+        print(f"\n>>> {key}: " + (f"Shorts: {describe_plan(profile)}" if "short" in formats else "")
+              + (f" | Long: {describe_long(profile)}" if "long" in formats else ""))
         try:
             profile["publish_plan"] = publish_plan(profile)
-            results[key] = orchestrator.execute_pipeline(key, dry_run=dry_runs[key])
+            profile["long_publish_plan"] = long_publish_plan(profile)
+            results[key] = orchestrator.execute_pipeline(key, dry_run=dry_runs[key], formats=formats)
             if not dry_runs[key] and results[key] == 0:
                 failed.append(key)
         except Exception as e:
@@ -318,24 +354,37 @@ def list_channels(config):
         print(f" {key}  -  {p['channel_name']}")
         print(f"    {state} | YouTube login: {login} | {'TEST RUN' if p['test_run'] else 'uploads'}")
         if p["has_answers"]:
-            print(f"    {describe_plan(p)} ({days}, {p['schedule']['timezone']})")
+            print(f"    Shorts: {describe_plan(p)} ({days}, {p['schedule']['timezone']})")
+            print(f"    Long:   {describe_long(p)}")
             print(f"    genre: {p['niche']} | {p['language']} | voice: {p['voice']} {p['voice_rate']}")
 
 
 def usage_report(config):
     """Estimate the YouTube API calls the answers use per day, against YouTube's daily limits."""
-    uploads = searches = 0
+    uploads = searches = github_minutes = 0
     for p in config["profiles"].values():
-        if not p["enabled"] or p["test_run"]:
+        if not p["enabled"]:
             continue
         runs_per_day = len(p["schedule"]["post_times"]) or 1
-        uploads += p["max_videos_per_run"] * runs_per_day
-        searches += len(p["search_queries"]) * runs_per_day
+        long_count = p["long"]["count"]
+        github_minutes += runs_per_day * (GITHUB_SETUP_MINUTES + p["max_videos_per_run"] * MINUTES_PER_SHORT
+                                          + long_count * MINUTES_PER_LONG)
+        if p["test_run"]:
+            continue
+        uploads += (p["max_videos_per_run"] + long_count) * runs_per_day
+        searches += len(p["search_queries"]) * runs_per_day * (2 if long_count else 1)
     print(f"\nDaily YouTube usage (all channels): {uploads} of {DAILY_UPLOAD_LIMIT} uploads, "
           f"up to {searches} of {DAILY_SEARCH_LIMIT} searches.")
     if uploads > DAILY_UPLOAD_LIMIT or searches > DAILY_SEARCH_LIMIT:
         print("WARNING: over YouTube's daily limit. Lower videos_per_day or search_phrases, "
               "or request more quota in Google Cloud Console.")
+    monthly = github_minutes * 30
+    print(f"Estimated GitHub Actions time: about {github_minutes} min a day, {monthly} min a month "
+          f"(private repos get {GITHUB_FREE_MINUTES} free minutes a month; public repos are unlimited).")
+    if monthly > GITHUB_FREE_MINUTES:
+        print("WARNING: likely over GitHub's free minutes for a private repo. Make the repo public, lower the "
+              "video counts, or GitHub will stop the runs (or bill you, if a payment method is set) for the rest "
+              "of the month.")
 
 
 def plan_warnings(config):
@@ -463,7 +512,7 @@ def ask_mode(config, instructions):
     if not ask_yes_no("\nStart now?", True):
         print("Cancelled.")
         return 0
-    return run_channels(config, instructions, [key], o, force_dry_run=dry_run)
+    return run_channels(config, instructions, [key], o, force_dry_run=dry_run, formats=("short",))
 
 
 # ---------- command line ----------
@@ -480,6 +529,8 @@ def main():
     parser.add_argument("--post-now", action="store_true", help="One-off: make every video live immediately")
     parser.add_argument("--visibility", choices=["public", "unlisted", "private"], help="One-off visibility")
     parser.add_argument("--dry-run", action="store_true", help="Make the videos but do not upload")
+    parser.add_argument("--format", choices=["both", "short", "long"], default="both",
+                        help="Which videos to make: Shorts, long videos, or both (default)")
     parser.add_argument("--ask", action="store_true", help="Answer the questions interactively for a one-off run")
     parser.add_argument("--scheduled", action="store_true", help="Run channels due for --cron (used by GitHub)")
     parser.add_argument("--due", action="store_true", help="Only print channels due for --cron (used by GitHub)")
@@ -551,7 +602,8 @@ def main():
         if not keys:
             print("No channel has run: true in questions.yaml.")
             return 1
-    return run_channels(config, instructions, keys, overrides, force_dry_run=args.dry_run)
+    formats = ("short", "long") if args.format == "both" else (args.format,)
+    return run_channels(config, instructions, keys, overrides, force_dry_run=args.dry_run, formats=formats)
 
 
 if __name__ == "__main__":

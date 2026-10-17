@@ -5,9 +5,12 @@ import edge_tts
 from google import genai
 
 from agents.ai import generate_text
+from brain import item_matches
 
 # Roughly 150 spoken words per minute, a pace most listeners follow comfortably
 WORDS_PER_SECOND = 2.5
+# Scripts more than 20% over their target word count are shortened
+LENGTH_TOLERANCE = 1.2
 
 class VoiceoverAgent:
     def __init__(self, config, instructions):
@@ -25,8 +28,22 @@ class VoiceoverAgent:
         self.ai_client = genai.Client(api_key=gemini_key)
 
     def generate_script(self, item):
-        target_seconds = self.profile.get("target_duration_seconds", 30)
+        target_seconds = item.get("target_seconds") or self.profile.get("target_duration_seconds", 30)
         target_words = int(target_seconds * WORDS_PER_SECOND)
+        if item.get("format") == "long":
+            task = (
+                f"Task: Write an original, engaging narration script of about {target_words} words (about "
+                f"{round(target_seconds / 60)} minutes spoken) for a regular YouTube video, not a Short. Open with a "
+                "strong hook, then 3 to 5 clearly separated parts (a story with a beginning, middle and end, or an "
+                "explanation that builds step by step), keep a lively pace throughout, and end with a short recap and "
+                "a question inviting viewers to comment.\n"
+            )
+        else:
+            task = (
+                f"Task: Write an original, high-retention narration script of about {target_words} words about this "
+                "topic for a YouTube Short: commentary, explanation, or a short funny story, whichever fits the "
+                "channel's tone and the master instructions.\n"
+            )
         avoid_terms = self.profile.get("avoid_terms") or []
 
         prompt = (
@@ -37,14 +54,37 @@ class VoiceoverAgent:
             f"Script Language: {self.profile.get('language', 'English')} (write in its native script)\n"
             f"Source Video Title: {item['original_title']}\n"
             f"Source Video Context: {item['original_description'][:300]}\n\n"
-            f"Task: Write an original, high-retention commentary script of about {target_words} words "
-            "explaining or analyzing this topic for a YouTube Short.\n"
+            + task
         )
         if avoid_terms:
             prompt += f"Never use these words or topics: {', '.join(avoid_terms)}.\n"
-        prompt += "Output ONLY the spoken narration text. No stage directions, no brackets, no intro labels."
+        prompt += (f"Stay within {target_words} words; a little shorter is fine, longer is not. "
+                   "Output ONLY the spoken narration text. No stage directions, no brackets, no intro labels.")
 
-        return generate_text(self.ai_client, prompt, self.config.get("ai_models"))
+        script = generate_text(self.ai_client, prompt, self.config.get("ai_models"))
+        return self.fit_length(script, target_words)
+
+    def fit_length(self, script, target_words):
+        """Keep the video near its target length: Gemini sometimes writes far more than asked."""
+        limit = int(target_words * LENGTH_TOLERANCE)
+        if len(script.split()) <= limit:
+            return script
+        print(f"[Agent 3: Voiceover] Script is {len(script.split())} words (target {target_words}); shortening...")
+        try:
+            script = generate_text(self.ai_client, (
+                f"Shorten this narration script to at most {target_words} words. Keep the opening hook, the main "
+                "story or explanation, and the ending (recap and question). Same language and tone. Output ONLY "
+                f"the shortened narration text.\n\n{script}"
+            ), self.config.get("ai_models"))
+        except Exception as e:
+            print(f"[Agent 3: Voiceover] Could not shorten with Gemini ({e}); trimming instead.")
+        words = script.split()
+        if len(words) <= limit:
+            return script
+        # Last resort: cut at the final sentence ending before the limit
+        trimmed = " ".join(words[:limit])
+        cut = max(trimmed.rfind(mark) for mark in (". ", "! ", "? ", "। "))
+        return trimmed[:cut + 1] if cut > len(trimmed) // 2 else trimmed
 
     def synthesize_voice(self, script_text, video_id):
         out_mp3 = os.path.join(self.paths["audio_renders"], f"vo_{self.active_key}_{video_id}.mp3")
@@ -59,7 +99,7 @@ class VoiceoverAgent:
             trends = json.load(f)
 
         for item in trends:
-            if item["status"] == "downloaded" and item["profile"] == self.active_key:
+            if item["status"] == "downloaded" and item_matches(item, self.active_key, self.profile):
                 vid_id = item["video_id"]
                 try:
                     script = self.generate_script(item)
