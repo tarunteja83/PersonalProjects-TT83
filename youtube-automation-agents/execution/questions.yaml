@@ -63,7 +63,7 @@ channels:
     fetch_time: "06:00"                    # Q12. When to fetch and prepare the day's videos  Options: any "HH:MM"
     first_post_time: "07:00"               # Q13. When the first video goes live   Options: any "HH:MM" (at least 30 min after fetch_time)
     post_frequency: "1 hour"               # Q14. Gap between videos               Options: "15 mins" | "30 mins" | "1 hour" | "3 hours"
-    videos_per_day: 12                     # Q15. Videos to post each day          Options: 1 to 50
+    videos_per_day: 6                      # Q15. Videos to post each day          Options: 1 to 50
     days: "daily"                          # Q16. Which days to post               Options: "daily" | "weekdays" | "weekends" | [mon, wed, fri]
     timezone: "Asia/Kolkata"               # Q17. Timezone for all times above     Options: "Asia/Kolkata" | "America/New_York" | "Europe/London" | ...
     visibility: "public"                   # Q18. Who can see the videos           Options: "public" | "unlisted" | "private"
@@ -87,7 +87,7 @@ channels:
     fetch_time: "15:00"                    # Q12. Options: any "HH:MM"
     first_post_time: "16:00"               # Q13. Options: any "HH:MM"
     post_frequency: "1 hour"               # Q14. Options: "15 mins" | "30 mins" | "1 hour" | "3 hours"
-    videos_per_day: 4                      # Q15. Options: 1 to 50
+    videos_per_day: 8                      # Q15. Options: 1 to 50
     days: "daily"                          # Q16. Options: "daily" | "weekdays" | "weekends" | [mon, wed, fri]
     timezone: "Asia/Kolkata"               # Q17
     visibility: "public"                   # Q18. Options: "public" | "unlisted" | "private"
