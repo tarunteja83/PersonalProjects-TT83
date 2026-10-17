@@ -108,10 +108,12 @@ jobs:
       - name: 7. Pull Channel Logins, Manifest & Prior Edited Videos from Google Drive
         if: steps.plan.outputs.channels != ''
         env:
-          RCLONE_CONFIG: ${{ secrets.RCLONE_CONFIG_GDRIVE }}
+          # Not named RCLONE_CONFIG: rclone reads that variable as the config file's path, not its contents
+          GDRIVE_RCLONE_CONF: ${{ secrets.RCLONE_CONFIG_GDRIVE }}
         run: |
           mkdir -p ~/.config/rclone
-          echo "${RCLONE_CONFIG}" > ~/.config/rclone/rclone.conf
+          printf '%s\n' "${GDRIVE_RCLONE_CONF}" > ~/.config/rclone/rclone.conf
+          chmod 600 ~/.config/rclone/rclone.conf
           mkdir -p ./GDrive_Mount/YouTube_Automation/00_tokens
           mkdir -p ./GDrive_Mount/YouTube_Automation/01_manifests
           mkdir -p ./GDrive_Mount/YouTube_Automation/03_edited_videos
