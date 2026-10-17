@@ -1,0 +1,13 @@
+# Never upload secrets or tokens to GitHub
+.env
+client_secret*.json
+token_*.json
+
+# Ignore media files & virtual environments
+*.mp4
+*.mp3
+*.wav
+GDrive_Mount/
+__pycache__/
+venv/
+.DS_Store

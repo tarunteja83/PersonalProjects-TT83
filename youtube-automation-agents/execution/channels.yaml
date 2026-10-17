@@ -1,0 +1,48 @@
+# =====================================================================
+#  CHANNEL PAGE  -  who each channel is
+#  Create the channel on YouTube yourself first, then list it here.
+#  What and when each channel posts is answered in: execution/questions.yaml
+#  Full rules: execution/execution.md
+# =====================================================================
+#
+#  RULES
+#    - The channel key (e.g. geopolitics_war) must be lowercase letters,
+#      numbers and underscores, start with a letter, and be unique.
+#      Use the SAME key in questions.yaml.
+#    - Indent with spaces, never tabs.
+#    - After any change run:  python execution/execution.py --check
+# =====================================================================
+
+channels:
+
+  geopolitics_war:
+    channel_name: "Frontline Ledger TT83"                            # REQUIRED: exactly as on YouTube
+    channel_url: "https://www.youtube.com/@frontline-ledger-tt83"    # REQUIRED: channel link; uploads only go ahead if the YouTube login matches it
+    made_for_kids: false                                             # REQUIRED: true | false  (true only for children under 13, legal COPPA setting)
+    watermark_text: "@frontline-ledger-tt83"                         # optional: default is @ + channel name
+    category_id: "25"                                                # optional: see category list below (default "24", or "27" for kids)
+
+  kids_edu:
+    channel_name: "WonderSprout Kids TT83"
+    channel_url: "https://www.youtube.com/channel/UCf9u1ZaejKPPA-oOD8oXVfg"
+    made_for_kids: true
+    watermark_text: "WonderSprout Kids"
+    category_id: "27"
+
+# =====================================================================
+#  TEMPLATE  (copy, paste under "channels:", remove the "# ")
+# =====================================================================
+#
+#  my_channel_key:
+#    channel_name: "Exact Channel Name On YouTube"
+#    channel_url: "https://www.youtube.com/@myhandle"     # or https://www.youtube.com/channel/UC...
+#    made_for_kids: false
+#    watermark_text: "@MyHandle"
+#    category_id: "24"
+#    logo_file: "execution/logos/my_logo.png"   # optional: end-card logo; default is the channel's YouTube profile picture
+#
+#  CATEGORY OPTIONS (category_id):
+#    "1" Film & Animation   "2" Autos & Vehicles   "10" Music        "15" Pets & Animals
+#    "17" Sports            "19" Travel & Events   "20" Gaming       "22" People & Blogs
+#    "23" Comedy            "24" Entertainment     "25" News & Politics
+#    "26" Howto & Style     "27" Education         "28" Science & Technology

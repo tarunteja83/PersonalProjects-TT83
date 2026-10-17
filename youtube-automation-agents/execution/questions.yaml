@@ -1,0 +1,122 @@
+# =====================================================================
+#  EXECUTION QUESTIONS  -  what and when each channel posts
+#
+#  execution.py reads this file every time it runs: from GitHub, from an
+#  IDE, from a terminal, or when you ask Copilot to "run execution.py".
+#  Answer the questions once per channel. The options for each question
+#  are in the comment beside it: copy one option and paste it as the value.
+#
+#  HOW POSTING WORKS
+#    At fetch_time the pipeline finds trending videos, writes and narrates
+#    a script for each, edits them, and uploads them all to YouTube with a
+#    go-live time: the first at first_post_time, then one every
+#    post_frequency, until videos_per_day are scheduled.
+#    Example: fetch_time "06:00", first_post_time "07:00", post_frequency
+#    "1 hour", videos_per_day 12  ->  videos go live 07:00, 08:00 ... 18:00.
+#
+#  RULES
+#    - Channel keys must match execution/channels.yaml exactly.
+#    - Put text and times in quotes. Times are 24-hour "HH:MM".
+#    - Leave a question out (delete the line) to use its default.
+#    - After any change run:  python execution/execution.py --check
+#      then push to GitHub so the schedule updates.
+#    - YouTube allows 100 uploads and 100 searches per day in total across
+#      ALL channels. --check shows how much of that your answers use.
+#
+#  VOICE OPTIONS (copy the voice name that matches the language)
+#    English: "en-US-AndrewNeural"      male, warm, all-rounder
+#             "en-US-ChristopherNeural" male, authoritative, news
+#             "en-US-GuyNeural"         male, energetic, sports
+#             "en-US-AriaNeural"        female, confident, news
+#             "en-US-EmmaNeural"        female, cheerful, kids and education
+#             "en-US-AnaNeural"         CHILD voice (young girl), best for kids channels
+#             "en-US-JennyNeural"       female, friendly, calm
+#             "en-IN-PrabhatNeural"     male, Indian English
+#             "en-IN-NeerjaNeural"      female, Indian English
+#    Hindi:   "hi-IN-MadhurNeural"      male
+#             "hi-IN-SwaraNeural"       female
+#    Telugu:  "te-IN-MohanNeural"       male
+#             "te-IN-ShrutiNeural"      female
+# =====================================================================
+
+channels:
+
+  geopolitics_war:                         # Q1. Channel to post to (key from channels.yaml)
+    run: true                              # Q2. Include this channel?            Options: true | false
+    genre: "Geopolitics of India, Europe, Russia and America, and current and ongoing wars"
+                                           # Q3. Genre to source trending videos for (any text)
+    search_phrases:                        # Q4. YouTube searches that find trending Shorts (1 to 5 lines; each run starts from the next phrase)
+      - "India foreign policy geopolitics news #shorts"
+      - "Russia Ukraine war update #shorts"
+      - "Europe NATO news #shorts"
+      - "America US foreign policy news #shorts"
+      - "Middle East war update #shorts"
+    language: "English"                    # Q5. Narration language                Options: "English" | "Hindi" | "Telugu"
+    voice: "en-US-ChristopherNeural"       # Q6. Narrator voice                    Options: see VOICE OPTIONS above (must match the language)
+    voice_speed: "-5%"                     # Q7. Speaking speed                    Options: "-15%" slow & very clear | "-5%" clear (recommended) | "+0%" natural | "+10%" brisk
+    tone: "Serious, objective, analytical intelligence briefing."
+                                           # Q8. Narration style (any text)
+    video_length_seconds: 30               # Q9. Length of each video              Options: 15 | 30 | 45 | 60
+    avoid_words: ["dead", "killed", "blood", "massacre"]
+                                           # Q10. Words the script must never use  Options: [] for none, or ["word1", "word2"]
+    lookback_days: 5                       # Q11. Use trending videos from the last N days   Options: 1 to 30
+    fetch_time: "06:00"                    # Q12. When to fetch and prepare the day's videos  Options: any "HH:MM"
+    first_post_time: "07:00"               # Q13. When the first video goes live   Options: any "HH:MM" (at least 30 min after fetch_time)
+    post_frequency: "1 hour"               # Q14. Gap between videos               Options: "15 mins" | "30 mins" | "1 hour" | "3 hours"
+    videos_per_day: 12                     # Q15. Videos to post each day          Options: 1 to 50
+    days: "daily"                          # Q16. Which days to post               Options: "daily" | "weekdays" | "weekends" | [mon, wed, fri]
+    timezone: "Asia/Kolkata"               # Q17. Timezone for all times above     Options: "Asia/Kolkata" | "America/New_York" | "Europe/London" | ...
+    visibility: "public"                   # Q18. Who can see the videos           Options: "public" | "unlisted" | "private"
+    test_run: false                        # Q19. Make videos without uploading    Options: true | false
+    exclude_sources: []                    # Q20. YouTube channels never to take videos from   Options: [] | ["Channel Name 1", "Channel Name 2"]
+
+  kids_edu:                                # Q1
+    run: true                              # Q2.  Options: true | false
+    genre: "Kids entertainment and education"
+    search_phrases:
+      - "amazing animal facts for kids #shorts"
+      - "fun science facts kids #shorts"
+      - "space facts for kids #shorts"
+    language: "English"                    # Q5.  Options: "English" | "Hindi" | "Telugu"
+    voice: "en-US-AnaNeural"               # Q6.  Options: see VOICE OPTIONS above
+    voice_speed: "-5%"                     # Q7.  Options: "-15%" | "-5%" | "+0%" | "+10%"
+    tone: "A cheerful, excited kid talking to other kids: playful, full of wonder, short punchy sentences, lots of 'Whoa!' and 'Guess what?'"
+    video_length_seconds: 30               # Q9.  Options: 15 | 30 | 45 | 60
+    avoid_words: []                        # Q10. Options: [] | ["word1", "word2"]
+    lookback_days: 5                       # Q11. Options: 1 to 30
+    fetch_time: "15:00"                    # Q12. Options: any "HH:MM"
+    first_post_time: "16:00"               # Q13. Options: any "HH:MM"
+    post_frequency: "1 hour"               # Q14. Options: "15 mins" | "30 mins" | "1 hour" | "3 hours"
+    videos_per_day: 4                      # Q15. Options: 1 to 50
+    days: "daily"                          # Q16. Options: "daily" | "weekdays" | "weekends" | [mon, wed, fri]
+    timezone: "Asia/Kolkata"               # Q17
+    visibility: "public"                   # Q18. Options: "public" | "unlisted" | "private"
+    test_run: false                        # Q19. Options: true | false
+    exclude_sources: []                    # Q20. Options: [] | ["Channel Name 1", "Channel Name 2"]
+
+# =====================================================================
+#  TEMPLATE  (copy, paste under "channels:", remove the "# ", answer each)
+# =====================================================================
+#
+#  my_channel_key:                         # Q1. same key as in channels.yaml
+#    run: true                             # Q2. true | false
+#    genre: "cricket highlights"           # Q3. any text
+#    search_phrases:                       # Q4. 1 to 5 lines
+#      - "cricket highlights #shorts"
+#      - "ipl best moments #shorts"
+#    language: "Telugu"                    # Q5. "English" | "Hindi" | "Telugu"
+#    voice: "te-IN-MohanNeural"            # Q6. see VOICE OPTIONS (must match language)
+#    voice_speed: "-5%"                    # Q7. "-15%" | "-5%" | "+0%" | "+10%"
+#    tone: "Energetic sports commentary."  # Q8. any text
+#    video_length_seconds: 30              # Q9. 15 | 30 | 45 | 60
+#    avoid_words: []                       # Q10. [] | ["word1", "word2"]
+#    lookback_days: 3                      # Q11. 1 to 30
+#    fetch_time: "06:00"                   # Q12. "HH:MM"
+#    first_post_time: "07:00"              # Q13. "HH:MM"
+#    post_frequency: "1 hour"              # Q14. "15 mins" | "30 mins" | "1 hour" | "3 hours"
+#    videos_per_day: 8                     # Q15. 1 to 50
+#    days: "daily"                         # Q16. "daily" | "weekdays" | "weekends" | [mon, wed, fri]
+#    timezone: "Asia/Kolkata"              # Q17. timezone name
+#    visibility: "public"                  # Q18. "public" | "unlisted" | "private"
+#    test_run: false                       # Q19. true | false
+#    exclude_sources: []                   # Q20. [] | ["Channel Name 1", "Channel Name 2"]

@@ -1,0 +1,151 @@
+name: Daily YouTube Multi-Agent Pipeline
+
+on:
+  schedule:
+    # BEGIN CHANNEL SCHEDULE (fetch times from execution/questions.yaml, updated by: python execution/execution.py --check)
+    - cron: '30 0 * * *'
+    - cron: '30 9 * * *'
+    # END CHANNEL SCHEDULE
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'Channel key, or "all" for every channel with run: true. Blank fields below use execution/questions.yaml'
+        required: true
+        default: 'all'
+        type: string
+      genre:
+        description: 'One-off genre to source trending videos for'
+        required: false
+        type: string
+      videos:
+        description: 'One-off number of videos (1 to 50)'
+        required: false
+        type: string
+      first_post_time:
+        description: 'One-off time the first video goes live, HH:MM in the channel timezone'
+        required: false
+        type: string
+      frequency:
+        description: 'One-off gap between videos'
+        required: false
+        default: 'from questions.yaml'
+        type: choice
+        options:
+          - 'from questions.yaml'
+          - '15 mins'
+          - '30 mins'
+          - '1 hour'
+          - '3 hours'
+      dry_run:
+        description: 'Test run: make the videos but do not upload'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: youtube-pipeline
+  cancel-in-progress: false
+
+jobs:
+  run-youtube-agents:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    defaults:
+      run:
+        working-directory: youtube-automation-agents
+
+    steps:
+      - name: 1. Checkout Repository Code
+        uses: actions/checkout@v7
+
+      - name: 2. Set Up Python 3.11
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: youtube-automation-agents/requirements.txt
+
+      - name: 3. Decide Which Channels Are Due
+        id: plan
+        env:
+          REQUESTED_CHANNEL: ${{ github.event.inputs.channel }}
+          TRIGGER_CRON: ${{ github.event.schedule }}
+        run: |
+          pip install pyyaml
+          if [ -n "$REQUESTED_CHANNEL" ]; then
+            CHANNELS="$REQUESTED_CHANNEL"
+          else
+            CHANNELS="$(python execution/execution.py --due --cron "$TRIGGER_CRON")"
+          fi
+          echo "Channels to run: ${CHANNELS:-none}"
+          echo "channels=$CHANNELS" >> "$GITHUB_OUTPUT"
+
+      - name: 4. Install FFmpeg & Rclone
+        if: steps.plan.outputs.channels != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg rclone
+
+      - name: 5. Install Python Dependencies
+        if: steps.plan.outputs.channels != ''
+        run: pip install -r requirements.txt
+
+      - name: 6. Restore API Keys
+        if: steps.plan.outputs.channels != ''
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          CLIENT_SECRET_JSON: ${{ secrets.CLIENT_SECRET_JSON }}
+        run: |
+          echo "YOUTUBE_API_KEY=${YOUTUBE_API_KEY}" >> .env
+          echo "GEMINI_API_KEY=${GEMINI_API_KEY}" >> .env
+          echo "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}" >> .env
+          echo "TELEGRAM_CHANNEL_ID=${TELEGRAM_CHANNEL_ID}" >> .env
+          echo "${CLIENT_SECRET_JSON}" > client_secret.json
+
+      - name: 7. Pull Channel Logins, Manifest & Prior Edited Videos from Google Drive
+        if: steps.plan.outputs.channels != ''
+        env:
+          RCLONE_CONFIG: ${{ secrets.RCLONE_CONFIG_GDRIVE }}
+        run: |
+          mkdir -p ~/.config/rclone
+          echo "${RCLONE_CONFIG}" > ~/.config/rclone/rclone.conf
+          mkdir -p ./GDrive_Mount/YouTube_Automation/00_tokens
+          mkdir -p ./GDrive_Mount/YouTube_Automation/01_manifests
+          mkdir -p ./GDrive_Mount/YouTube_Automation/03_edited_videos
+          rclone copy gdrive:YouTube_Automation/00_tokens ./GDrive_Mount/YouTube_Automation/00_tokens
+          rclone copy gdrive:YouTube_Automation/01_manifests ./GDrive_Mount/YouTube_Automation/01_manifests || true
+          rclone copy gdrive:YouTube_Automation/03_edited_videos ./GDrive_Mount/YouTube_Automation/03_edited_videos || true
+
+      - name: 8. Run the Pipeline (execution/execution.py)
+        if: steps.plan.outputs.channels != ''
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TRIGGER_CRON: ${{ github.event.schedule }}
+          CHANNEL: ${{ github.event.inputs.channel }}
+          GENRE: ${{ github.event.inputs.genre }}
+          VIDEOS: ${{ github.event.inputs.videos }}
+          FIRST_POST: ${{ github.event.inputs.first_post_time }}
+          FREQUENCY: ${{ github.event.inputs.frequency }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            EXTRA=""
+            if [ "$DRY_RUN" = "true" ]; then EXTRA="--dry-run"; fi
+            if [ "$FREQUENCY" = "from questions.yaml" ]; then FREQUENCY=""; fi
+            python execution/execution.py --channel "$CHANNEL" --genre "$GENRE" --videos "$VIDEOS" \
+              --first-post "$FIRST_POST" --frequency "$FREQUENCY" $EXTRA
+          else
+            python execution/execution.py --scheduled --cron "$TRIGGER_CRON"
+          fi
+
+      - name: 9. Sync Cleaned Folders, Logins & Updated Manifest Back to Google Drive
+        if: always() && steps.plan.outputs.channels != ''
+        run: |
+          rclone copy ./GDrive_Mount/YouTube_Automation/00_tokens gdrive:YouTube_Automation/00_tokens
+          rclone copy ./GDrive_Mount/YouTube_Automation/01_manifests gdrive:YouTube_Automation/01_manifests
+          rclone sync ./GDrive_Mount/YouTube_Automation/03_edited_videos gdrive:YouTube_Automation/03_edited_videos
+          rclone delete gdrive:YouTube_Automation/02_raw_videos || true
+          rclone delete gdrive:YouTube_Automation/02_audio_voiceovers || true
