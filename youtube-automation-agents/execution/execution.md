@@ -30,7 +30,10 @@ Everything you need to run the YouTube automation lives in this folder:
 
 For each channel, every day it is scheduled (`days`):
 
-1. **At `fetch_time`**, GitHub starts the pipeline. It finds trending Shorts for your `genre` and `search_phrases`, writes a script in your `language`, narrates it with your `voice` at your `voice_speed`, and edits each video.
+1. **At `fetch_time`**, GitHub starts the pipeline:
+   - It finds trending topics for your `genre` and `search_phrases` on YouTube.
+   - It downloads matching **free stock clips from Pixabay** (or Pexels). YouTube blocks downloading its videos from cloud servers like GitHub's, and stock footage also avoids copyright claims.
+   - It writes a script in your `language`, narrates it with your `voice` at your `voice_speed`, and edits the clips into a montage.
 2. **It uploads all `videos_per_day` videos at once**, each with its own go-live time: the first at `first_post_time`, then one every `post_frequency`.
 3. **YouTube publishes each video exactly at its time**, even though GitHub has already finished.
 
@@ -125,12 +128,14 @@ For Hindi and Telugu, scripts, titles and descriptions are written in the native
 | 3 | Upload permission | Save your Google Cloud **OAuth Desktop client** file as `client_secret.json` in `youtube-automation-agents`. On the OAuth consent screen click **Publish app**; otherwise logins expire every 7 days. |
 | 4 | Google Drive | Create the folder `YouTube_Automation/00_tokens/`. |
 | 5 | rclone | `rclone config` and create a remote named exactly **`gdrive`** (type: drive). |
-| 6 | GitHub secrets | Repo → Settings → Secrets and variables → Actions. Add the 6 secrets below. |
+| 6 | Stock footage key | Create a free account at [pixabay.com](https://pixabay.com/accounts/register/), open [pixabay.com/api/docs](https://pixabay.com/api/docs/) while logged in, copy the key shown under **Parameters → key**, and add it to `.env` as `PIXABAY_API_KEY`. (A Pexels key in `PEXELS_API_KEY` also works.) |
+| 7 | GitHub secrets | Repo → Settings → Secrets and variables → Actions. Add the 7 secrets below. |
 
 | Secret | Contents |
 |---|---|
 | `YOUTUBE_API_KEY` | YouTube Data API v3 key |
 | `GEMINI_API_KEY` | Gemini API key |
+| `PIXABAY_API_KEY` | Pixabay API key (free stock footage). `PEXELS_API_KEY` can be used instead. |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token |
 | `TELEGRAM_CHANNEL_ID` | Telegram channel ID (starts with `-100`) |
 | `CLIENT_SECRET_JSON` | Full contents of `client_secret.json` |
@@ -209,6 +214,17 @@ It runs **every channel with `run: true`** using its answers in `questions.yaml`
 | `python execution/execution.py --authorize KEY` | Sign in to YouTube for a channel |
 
 ---
+
+## Where the Footage Comes From
+
+Set under `footage` in `BRAIN.md`:
+
+| `source` | What it does | Works on GitHub? |
+|---|---|---|
+| `"stock"` (default) | Gemini picks 3 visual search terms for the topic. The pipeline downloads 3 matching clips from Pixabay or Pexels (`provider`) and edits them into a vertical montage; landscape clips are centre-cropped. Descriptions credit the site and the contributors, as both sites ask. | Yes |
+| `"youtube"` | Re-uses the trending video itself. | **No.** YouTube blocks downloads from cloud servers ("Sign in to confirm you're not a bot"). Works only when run from your laptop. |
+
+`clips_per_video` sets how many clips each video uses (default 3). The free limits (Pixabay: 100 requests a minute; Pexels: 200 an hour) are far more than 14 videos a day needs.
 
 ## Where Video Files Are Kept
 

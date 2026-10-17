@@ -1,4 +1,5 @@
 import os
+import html
 import json
 from datetime import datetime, timedelta, timezone
 from googleapiclient.discovery import build
@@ -111,9 +112,10 @@ class TrendScoutAgent:
             "video_id": vid_id,
             "profile": self.active_key,
             "genre": query,
-            "original_title": item["snippet"]["title"],
-            "original_description": item["snippet"]["description"],
-            "original_creator": item["snippet"]["channelTitle"],
+            # The search API returns HTML-escaped text (e.g. &#39; and &amp;)
+            "original_title": html.unescape(item["snippet"]["title"]),
+            "original_description": html.unescape(item["snippet"]["description"]),
+            "original_creator": html.unescape(item["snippet"]["channelTitle"]),
             "source_url": f"https://www.youtube.com/watch?v={vid_id}",
             "discovered_at": datetime.now(timezone.utc).isoformat(),
             "status": "discovered",

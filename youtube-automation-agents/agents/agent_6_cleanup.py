@@ -80,8 +80,11 @@ class CleanupAgent:
                 is_previous_date = (discovered_date != "" and discovered_date < today_str)
 
                 if self.cleanup_rules.get("delete_raw_after_publish", True):
-                    if self._safe_remove(item.get("raw_video_path")):
+                    for clip in item.get("footage_paths") or []:
+                        self._safe_remove(clip)
+                    if self._safe_remove(item.get("raw_video_path")) or item.get("footage_paths"):
                         item["raw_video_path"] = None
+                        item["footage_paths"] = []
                         cleaned_count += 1
 
                 if self.cleanup_rules.get("delete_voiceover_after_publish", True):

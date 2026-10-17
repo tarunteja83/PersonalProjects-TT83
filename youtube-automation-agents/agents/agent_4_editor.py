@@ -104,6 +104,21 @@ class VideoEditorAgent:
         self.rules = config["editing_rules"]
         self.paths = config["storage_paths"]
 
+    @staticmethod
+    def build_montage(paths, duration, size=(1080, 1920)):
+        """Join stock clips into one vertical video as long as the narration, each clip getting an equal share."""
+        segment = duration / len(paths)
+        sources, parts = [], []
+        for path in paths:
+            source = VideoFileClip(path)
+            sources.append(source)
+            clip = source.without_audio()
+            # Scale to cover the frame, then crop the centre so nothing is letterboxed
+            scaled = clip.resize(max(size[0] / clip.w, size[1] / clip.h))
+            fitted = scaled.crop(x_center=scaled.w / 2, y_center=scaled.h / 2, width=size[0], height=size[1])
+            parts.append(fitted.loop(duration=segment) if fitted.duration < segment else fitted.subclip(0, segment))
+        return concatenate_videoclips(parts), sources
+
     def end_card_clip(self, video):
         """The closing "LIKE, then SUBSCRIBE" card, or None when end_card.enabled is false in BRAIN.md."""
         settings = self.rules.get("end_card") or {}
@@ -140,16 +155,21 @@ class VideoEditorAgent:
 
                 print(f"\n[Agent 4: Editor] Editing & Watermarking {vid_id}...")
                 try:
-                    video_clip = VideoFileClip(raw_video)
                     voice_clip = AudioFileClip(vo_audio)
-
-                    # Loop or trim the picture only; looping a clip's audio in MoviePy 1.0.3 reads past its end
-                    original_audio = video_clip.audio
-                    picture = video_clip.without_audio()
-                    if picture.duration < voice_clip.duration:
-                        picture = picture.loop(duration=voice_clip.duration)
+                    if item.get("footage_paths"):
+                        # Stock footage: a montage of the downloaded clips (they have no useful sound of their own)
+                        picture, sources = self.build_montage(item["footage_paths"], voice_clip.duration)
+                        original_audio = None
                     else:
-                        picture = picture.subclip(0, voice_clip.duration)
+                        video_clip = VideoFileClip(raw_video)
+                        sources = [video_clip]
+                        # Loop or trim the picture only; looping a clip's audio in MoviePy 1.0.3 reads past its end
+                        original_audio = video_clip.audio
+                        picture = video_clip.without_audio()
+                        if picture.duration < voice_clip.duration:
+                            picture = picture.loop(duration=voice_clip.duration)
+                        else:
+                            picture = picture.subclip(0, voice_clip.duration)
 
                     # Zoom in, then crop back to the original frame size around the centre
                     width, height = picture.size
@@ -197,7 +217,8 @@ class VideoEditorAgent:
                         logger=None
                     )
 
-                    video_clip.close()
+                    for source in sources:
+                        source.close()
                     voice_clip.close()
                     final_clip.close()
 

@@ -80,11 +80,21 @@ class PublisherAgent:
         new_title = resp[0].replace('"', '').strip()[:65]
         seo_body = "\n".join(resp[1:]).strip()
 
-        credit_block = (
-            f"\n\n---\n"
-            f"Visual Reference & Credit: {clean_creator_name}\n"
-            f"Commentary and analysis produced by {self.profile['channel_name']} under Fair Use guidelines."
-        )
+        if item.get("footage_paths"):
+            # Pixabay and Pexels ask that you show where the footage came from
+            site = {"pexels": ("Pexels", "https://www.pexels.com")}.get(item.get("footage_provider"),
+                                                                         ("Pixabay", "https://pixabay.com"))
+            credit_block = (
+                f"\n\n---\n"
+                f"Stock footage: {site[0]} ({site[1]}), videos by {', '.join(item.get('footage_credits') or [site[0]])}\n"
+                f"Commentary produced by {self.profile['channel_name']}."
+            )
+        else:
+            credit_block = (
+                f"\n\n---\n"
+                f"Visual Reference & Credit: {clean_creator_name}\n"
+                f"Commentary and analysis produced by {self.profile['channel_name']} under Fair Use guidelines."
+            )
 
         return new_title, f"{seo_body}{credit_block}"
 

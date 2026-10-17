@@ -24,6 +24,14 @@ local_media:
   root: "H:/My Drive/YouTube_Auto"   # your Google Drive (Drive for Desktop); "~/YouTube_Auto" = your user folder instead
   keep_days: 2
 
+# Where each video's pictures come from:
+#   "stock"   = free stock clips matching the topic (works everywhere, including GitHub)
+#   "youtube" = re-use the trending video itself (laptop only: YouTube blocks downloads from cloud servers)
+footage:
+  source: "stock"
+  provider: "auto"        # "pixabay" | "pexels" | "auto" (whichever key is set: PIXABAY_API_KEY, then PEXELS_API_KEY)
+  clips_per_video: 3
+
 editing_rules:
   zoom_factor: 1.06
   original_audio_volume: 0      # 0 = only the AI voice is heard; 0.05 = original sound faintly underneath
@@ -51,4 +59,4 @@ cleanup_rules:
 * **Agent 1 (Scout):** Prioritize high-velocity Short videos. Store clean metadata in human-readable JSON.
 * **Agent 3 (Script & Voice):** Write a transformative commentary script on the trending topic, sized to the channel's `target_duration_seconds`, in the channel's language and tone. Short, clear sentences that read naturally aloud. **Open with a hook in the first sentence (first 3 seconds)**: a surprising fact, a bold question, or a "you won't believe" moment that makes the viewer keep watching, then pay it off before the end. For news and war channels, strictly avoid graphic or violent terms so the video remains advertiser-friendly; use strategic terminology ("escalating tensions", "frontline shifts", "defense posture"). For kids channels, write as an excited child talking to friends: very simple words, playful wonder, a "Guess what?" or "Whoa!" style hook, and end with a fun question that invites them to watch the next video.
 * **Agent 4 (Editor):** Apply a 1.06x crop zoom, remove the original audio completely (original_audio_volume 0), use only the AI voiceover, place the channel watermark in the bottom-right corner, and end every video with the end card (channel name, LIKE first, then SUBSCRIBE).
-* **Agent 5 (Publisher):** Generate a high-CTR title under 65 characters. Always include plain-text credit to the original source channel in the description WITHOUT using the `@` mention symbol.
+* **Agent 5 (Publisher):** Generate a high-CTR title under 65 characters. Always include plain-text credit in the description WITHOUT using the `@` mention symbol: for stock footage, a link to Pexels and the videographers' names; for re-used videos, the original source channel.

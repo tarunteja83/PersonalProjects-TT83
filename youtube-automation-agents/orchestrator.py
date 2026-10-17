@@ -11,7 +11,7 @@ from agents.agent_5_publisher import PublisherAgent
 from agents.agent_6_cleanup import CleanupAgent
 from agents.agent_7_notifier import TelegramNotifierAgent
 
-# Some trending videos can't be downloaded (removed, region- or kids-restricted), so look again a few times
+# Footage can't always be found (no matching stock clips, or a restricted video), so look again a few times
 FIND_ATTEMPTS = 3
 READY_STATUSES = ("downloaded", "voiced", "edited")
 
@@ -50,7 +50,7 @@ class OrchestratorAgent:
         print("====================================================")
 
         scout = TrendScoutAgent(config, self.instructions)
-        downloader = DownloaderAgent(paths["manifest_file"], paths["raw_downloads"])
+        downloader = DownloaderAgent(paths["manifest_file"], paths["raw_downloads"], config)
         for attempt in range(FIND_ATTEMPTS):
             ready = sum(1 for i in self.manifest_items(channel_key) if i["status"] in READY_STATUSES)
             if ready >= wanted:

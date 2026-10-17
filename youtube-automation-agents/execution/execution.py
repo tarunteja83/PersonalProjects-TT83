@@ -194,6 +194,12 @@ def preflight(config, keys, dry_runs):
     for name in ("YOUTUBE_API_KEY", "GEMINI_API_KEY"):
         if not os.getenv(name):
             problems.append(f"{name} is not set (add it to .env, or as a GitHub secret).")
+    footage = config.get("footage") or {}
+    if footage.get("source", "stock") == "stock":
+        from agents.stock_footage import choose_provider
+        if not choose_provider(footage.get("provider", "auto"))[0]:
+            problems.append("No stock footage key is set. Add PIXABAY_API_KEY (free at https://pixabay.com/api/docs/) "
+                            "to .env, or as a GitHub secret.")
     if problems:
         print("\nCannot start:\n  - " + "\n  - ".join(problems))
         return []

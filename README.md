@@ -56,7 +56,7 @@ Every video tracked in the manifest moves through these statuses:
 | # | Agent | File | What it does |
 |---|---|---|---|
 | 1 | **Trend Scout** | [agent_1_scout.py](youtube-automation-agents/agents/agent_1_scout.py) | Uses the YouTube Data API v3 to search the channel's search phrases, in its language, for the most-viewed Shorts from the last `lookback_days`. Rotates across phrases, takes at most one video per source channel, avoids recently used sources and any in `exclude_sources`, and adds up to `videos_per_day` new entries. |
-| 2 | **Downloader** | [agent_2_downloader.py](youtube-automation-agents/agents/agent_2_downloader.py) | Downloads each discovered video as MP4 (up to 1920p) using `yt-dlp`. |
+| 2 | **Footage** | [agent_2_downloader.py](youtube-automation-agents/agents/agent_2_downloader.py) | Downloads free stock clips from Pixabay (or Pexels) that match each topic, using search terms picked by Gemini ([stock_footage.py](youtube-automation-agents/agents/stock_footage.py)). Optionally re-uses the trending video itself with `yt-dlp`, but only from a laptop, because YouTube blocks downloads from cloud servers. |
 | 3 | **Script & Voiceover** | [agent_3_voiceover.py](youtube-automation-agents/agents/agent_3_voiceover.py) | Asks Gemini 2.5 Flash to write an original commentary script sized to the channel's target video length, in its language and tone, avoiding any banned terms. Narrates it with the channel's Microsoft neural voice and speed via `edge-tts` (free, no API key). |
 | 4 | **Video Editor** | [agent_4_editor.py](youtube-automation-agents/agents/agent_4_editor.py) | Uses MoviePy to trim or loop the clip to match the voiceover, apply a slight crop zoom, replace the original audio with the AI narration (set by `original_audio_volume` in BRAIN.md, currently 0), overlay the channel watermark, and add a 3-second end card (channel name, LIKE first, then SUBSCRIBE). Graphics are drawn with Pillow, so ImageMagick isn't needed. |
 | 5 | **Publisher** | [agent_5_publisher.py](youtube-automation-agents/agents/agent_5_publisher.py) | Generates an SEO title, description and hashtags with Gemini, adds a plain-text credit to the original creator, and uploads to the correct YouTube channel via OAuth. Sets visibility, Made for Kids and synthetic-media disclosure, and schedules each video's go-live time on YouTube according to `first_post_time` and `post_frequency`. |
@@ -136,7 +136,7 @@ Follow **One-Time Setup** in [execution/execution.md](youtube-automation-agents/
 2. **API keys:** copy `.env.example` to `.env` and add your YouTube and Gemini keys. Telegram is optional.
 3. **Upload permission:** save your Google OAuth Desktop client as `client_secret.json`, and publish the consent screen so logins don't expire after 7 days.
 4. **YouTube logins:** sign in once per channel with `python execution/execution.py --authorize <channel_key>`, then upload each token file to Google Drive `YouTube_Automation/00_tokens/`.
-5. **GitHub secrets:** add the 6 secrets `YOUTUBE_API_KEY`, `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHANNEL_ID`, `CLIENT_SECRET_JSON` and `RCLONE_CONFIG_GDRIVE`.
+5. **GitHub secrets:** add the 7 secrets `YOUTUBE_API_KEY`, `GEMINI_API_KEY`, `PIXABAY_API_KEY` (free at pixabay.com/api/docs), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHANNEL_ID`, `CLIENT_SECRET_JSON` and `RCLONE_CONFIG_GDRIVE`.
 6. **Check and test:** `python execution/execution.py --check`, then `python execution/execution.py --channel geopolitics_war --dry-run`.
 
 ### Regenerating the Project
