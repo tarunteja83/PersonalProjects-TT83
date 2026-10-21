@@ -68,7 +68,8 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
 - **Python versions:** GitHub uses **Python 3.11**. Don't use 3.12+ syntax, such as reusing a quote inside an f-string
   expression.
 - **`youtube-automation-agents/.env`** (git-ignored) holds the real keys: YOUTUBE, GEMINI, PIXABAY, TELEGRAM, HF_TOKEN
-  (kept for future use). **Never overwrite it or `.env.example` without reading it first;** the owner once put real
+  (kept for future use) and GITHUB_TOKEN (fine-grained, this repo only, Actions read and write: used to read run logs
+  and start the workflow through the API). **Never overwrite it or `.env.example` without reading it first;** the owner once put real
   keys in `.env.example`. Never print key values; mask them.
 - **GitHub secrets:** YOUTUBE_API_KEY, GEMINI_API_KEY, PIXABAY_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID,
   CLIENT_SECRET_JSON, RCLONE_CONFIG_GDRIVE (rclone uses the owner's own OAuth client; the env var must not be named
@@ -95,11 +96,25 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
 - **Write for the owner in plain terms:** explain where to click, and give options with a recommendation.
 
 ## Status and open items (as of 2026-10-21)
-- **Shipped:** the full pipeline is live on `main`, including scene-synced footage, long videos and the GitHub
-  hardening.
-- **Not yet confirmed:** that full scheduled days complete on GitHub. Ask the owner for the Actions results (green
-  ticks, the step 8 RESULT section) and their billing minutes.
+- **Shipped (commit f0f8d7e on `main`, branch `three-daily-runs-telegram-hashtags`):** three runs a day for both
+  channels, the cron lead, Telegram start and per-channel messages, merged Gemini calls, title fallback and hashtags.
+- **Run history:**
+  - 18 to 20 Oct: scheduled runs succeeded, starting 4h22m to 5h28m after their cron times.
+  - 20 Oct (kids) and 21 Oct (Frontline): failed with 0 uploaded. Gemini returned 429 on every model mid-run, and
+    titles couldn't be written (the kids run had already uploaded its 2 long videos).
+  - 21 Oct 14:56 IST, manual run 39576955716 on f0f8d7e: success, 5 of 6 uploaded in 13 min. Passed slots went live
+    about 15 min after upload; the title fallback was used once (Gemini still 429). One kids Short failed with
+    YouTube's "exceeded the number of videos they may upload" (the channel's own daily limit).
+  - First scheduled run on the new schedule: the 06:00 run on 22 Oct (cron 20:05 UTC = 01:35 IST). Not yet checked.
+- **Open items:**
+  - Ask the owner for the next days' Telegram messages or Actions results: check that runs start near
+    06:00/13:00/17:00 (tune `github_schedule_lead_minutes` if not) and that all 16 videos upload.
+  - YouTube daily upload limit: the owner was advised to phone-verify both channels at youtube.com/verify.
+  - Leftover finished videos from the failed runs are uploaded first by the next runs (Frontline had 1 long + 4
+    Shorts waiting). A test Short made on the laptop is "edited" in the local manifest and will upload on a local run.
+  - The owner's Gmail is public as the author of every commit; they were told about GitHub's "Keep my email addresses
+    private" setting. History was not rewritten.
 - **Optional clean-up:** some early test videos on YouTube are unlisted (a few have old audio or the 11-minute kids
   video); the owner was advised to delete or publish them in Studio.
-- **Possible future work:** more channels (add to both YAML files and run `--authorize`), and tuning scene-matching
-  quality from sync reports.
+- **Possible future work:** more channels (add to both YAML files and run `--authorize`; about 3 channels fit the
+  YouTube search limit on this schedule), and tuning scene-matching quality from sync reports.

@@ -351,4 +351,7 @@ The manifest, YouTube logins and logos always stay in `GDrive_Mount/YouTube_Auto
 | "Cannot start: No .env file" | Copy `.env.example` to `.env` and fill in the keys. |
 | `--check` warns about YouTube usage | Lower `videos_per_day` or the number of `search_phrases`, or request more quota in Google Cloud Console. |
 | `pip` says "filename too long" | Use a short-path venv (One-Time Setup, step 1). |
+| "429 RESOURCE_EXHAUSTED" from Gemini | The Gemini quota is used up. The run waits one minute and tries again once; if it's still limited, the rest of the run skips Gemini (footage uses topic terms, titles use the source video's title), so finished videos still upload. If it happens every day, use a paid Gemini key or fewer videos. |
+| "The user has exceeded the number of videos they may upload" | YouTube's daily upload limit for that channel (low for new, unverified channels). Verify the channel by phone at youtube.com/verify. The video stays queued and uploads on a later run. |
+| Runs start far from 06:00 / 13:00 / 17:00 | GitHub's delay changed. The Telegram start message shows how early or late; change `github_schedule_lead_minutes` in `BRAIN.md`, run `--check` and push. |
 | Narration fails | The free voice service occasionally changes. Run `pip install -U edge-tts`. Videos stay queued and retry on the next run. |
