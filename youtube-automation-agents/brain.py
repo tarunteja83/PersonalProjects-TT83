@@ -54,6 +54,9 @@ def load_brain(brain_file=BRAIN_FILE, channels_file=CHANNELS_FILE, questions_fil
     config = yaml.safe_load(yaml_match.group(1))
     instructions = raw_md.split("## AGENT INSTRUCTIONS")[-1].strip()
     config["profiles"] = load_profiles(channels_file, questions_file)
+    lead = int(config.get("github_schedule_lead_minutes") or 0)
+    for profile in config["profiles"].values():
+        profile["schedule"]["lead_minutes"] = lead
     apply_media_folders(config)
     return config, instructions
 
@@ -98,6 +101,14 @@ def load_profiles(channels_file=CHANNELS_FILE, questions_file=QUESTIONS_FILE):
     return {key: build_profile(channels[key], answers.get(key)) for key in channels}
 
 
+def fetch_times(answers):
+    """Q12 fetch_time as a list: one "HH:MM", or a list of them for several runs a day."""
+    value = answers.get("fetch_time")
+    if value in (None, "", []):
+        return []
+    return list(value) if isinstance(value, list) else [value]
+
+
 def build_profile(channel, answers):
     """Combine a channel's identity with its answers into the settings the agents use."""
     kids = bool(channel["made_for_kids"])
@@ -126,17 +137,21 @@ def build_profile(channel, answers):
         "target_duration_seconds": int(a.get("video_length_seconds") or 30),
         "avoid_terms": a.get("avoid_words") or [],
         "lookback_days": int(a.get("lookback_days") or 5),
-        "max_videos_per_run": int(a.get("videos_per_day") or 1),
+        # Day total of Shorts: one per short_post_times entry when given, else videos_per_day
+        "max_videos_per_run": len(a.get("short_post_times") or []) or int(a.get("videos_per_day") or 1),
         "privacy_status": a.get("visibility") or "public",
         "test_run": bool(a.get("test_run", False)),
         "exclude_sources": a.get("exclude_sources") or [],
         "footage_style": a.get("footage_style") or "any",
         "schedule": {
             "timezone": a.get("timezone") or DEFAULT_TIMEZONE,
-            "post_times": [a["fetch_time"]] if a.get("fetch_time") else [],
+            # One run per fetch time; the day's videos are shared between the runs (see run_window)
+            "post_times": fetch_times(a),
             "days": a.get("days") or "daily",
         },
         "posting": {
+            # Exact go-live times (short_post_times), or first_post_time then every post_frequency
+            "post_times": list(a.get("short_post_times") or []),
             "first_post_time": a.get("first_post_time"),
             "frequency_minutes": FREQUENCIES.get(a.get("post_frequency") or "1 hour", 60),
         },
@@ -239,23 +254,37 @@ def validate_answers(answers, channels):
         if not isinstance(long_times, list):
             problems.append(f'{where}: long_post_times must be a list, e.g. ["13:00", "19:00"]')
             long_times = []
-        for t in long_times:
-            try:
-                parse_time(t)
-            except ValueError:
-                problems.append(f"{where}: long post time '{t}' must be HH:MM in 24-hour format, in quotes")
+        short_times = a.get("short_post_times") or []
+        if not isinstance(short_times, list):
+            problems.append(f'{where}: short_post_times must be a list, e.g. ["08:00", "10:00"]')
+            short_times = []
+        if len(short_times) > MAX_VIDEOS_PER_DAY:
+            problems.append(f"{where}: short_post_times can list at most {MAX_VIDEOS_PER_DAY} times")
+        for label, times_list in (("long", long_times), ("short", short_times)):
+            for t in times_list:
+                try:
+                    parse_time(t)
+                except (ValueError, AttributeError):
+                    problems.append(f"{where}: {label} post time '{t}' must be HH:MM in 24-hour format, in quotes")
         if isinstance(long_count, int) and long_count > len(long_times):
             problems.append(f"{where}: give one long_post_times entry per long video "
                             f"({long_count} needed, {len(long_times)} given)")
         lookback = a.get("lookback_days")
         if lookback is not None and not (isinstance(lookback, int) and 1 <= lookback <= 30):
             problems.append(f"{where}: lookback_days must be a whole number from 1 to 30")
-        for field in ("fetch_time", "first_post_time"):
-            if a.get(field) is not None:
-                try:
-                    parse_time(a[field])
-                except ValueError:
-                    problems.append(f"{where}: {field} '{a[field]}' must be HH:MM in 24-hour format, in quotes")
+        times = [("fetch_time", t) for t in fetch_times(a)]
+        if a.get("first_post_time") is not None:
+            times.append(("first_post_time", a["first_post_time"]))
+        for field, value in times:
+            try:
+                parse_time(value)
+            except (ValueError, AttributeError):
+                problems.append(f"{where}: {field} '{value}' must be HH:MM in 24-hour format, in quotes")
+        try:
+            if len({parse_time(t) for t in fetch_times(a)}) < len(fetch_times(a)):
+                problems.append(f"{where}: fetch_time lists the same time twice")
+        except (ValueError, AttributeError):
+            pass
         try:
             ZoneInfo(a.get("timezone") or DEFAULT_TIMEZONE)
         except (ZoneInfoNotFoundError, ValueError):
@@ -289,8 +318,13 @@ def parse_days(value):
     return sorted({DAY_NAMES.index(str(day).strip().lower()[:3]) for day in value})
 
 
+def cron_time(local_dt, schedule):
+    """When GitHub's schedule should fire (UTC) for a run meant to start at local_dt: lead_minutes earlier."""
+    return (local_dt - timedelta(minutes=schedule.get("lead_minutes") or 0)).astimezone(timezone.utc)
+
+
 def utc_slots(profile, ref_date=None):
-    """Map each fetch time to UTC as {(minute, hour): {cron weekdays}} (cron weekdays: 0 = Sunday)."""
+    """Map each fetch time to its GitHub cron time as {(minute, hour): {cron weekdays}} (cron weekdays: 0 = Sunday)."""
     schedule = profile.get("schedule") or {}
     tz = ZoneInfo(schedule.get("timezone", DEFAULT_TIMEZONE))
     ref = ref_date or datetime.now(tz).date()
@@ -300,7 +334,7 @@ def utc_slots(profile, ref_date=None):
         local_time = parse_time(post_time)
         for weekday in parse_days(schedule.get("days", "daily")):
             local_date = ref + timedelta(days=(weekday - ref.weekday()) % 7)
-            utc_dt = datetime.combine(local_date, local_time, tzinfo=tz).astimezone(timezone.utc)
+            utc_dt = cron_time(datetime.combine(local_date, local_time, tzinfo=tz), schedule)
             slots.setdefault((utc_dt.minute, utc_dt.hour), set()).add((utc_dt.weekday() + 1) % 7)
 
     return slots
@@ -320,6 +354,19 @@ def cron_lines(config):
 
     ordered = sorted(merged.items(), key=lambda item: (item[0][1], item[0][0]))
     return [f"{minute} {hour} * * {format_cron_days(days)}" for (minute, hour), days in ordered]
+
+
+def fetch_time_for_cron(profile, cron, ref_date=None):
+    """The channel's local fetch time that the GitHub cron ("minute hour ...", UTC) stands for, or None."""
+    minute, hour = (int(part) for part in cron.split()[:2])
+    schedule = profile.get("schedule") or {}
+    tz = ZoneInfo(schedule.get("timezone", DEFAULT_TIMEZONE))
+    ref = ref_date or datetime.now(tz).date()
+    for post_time in schedule.get("post_times") or []:
+        utc_dt = cron_time(datetime.combine(ref, parse_time(post_time), tzinfo=tz), schedule)
+        if (utc_dt.minute, utc_dt.hour) == (minute, hour):
+            return parse_time(post_time)
+    return None
 
 
 def due_profiles(config, cron, now=None):

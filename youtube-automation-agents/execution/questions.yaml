@@ -14,6 +14,22 @@
 #    Example: fetch_time "06:00", first_post_time "07:00", post_frequency
 #    "1 hour", videos_per_day 12  ->  videos go live 07:00, 08:00 ... 18:00.
 #
+#    SEVERAL RUNS A DAY: give fetch_time a list, e.g. ["06:00", "13:00"].
+#    The day's videos (Shorts and long) are shared between the runs: each
+#    run makes the videos whose go-live time falls before the next run.
+#    Example: fetch ["06:00", "13:00", "17:00"],
+#    short_post_times ["08:00", "10:00", "14:00", "16:00", "18:00", "19:00"],
+#    long_post_times ["12:00", "16:30"]
+#      ->  06:00 run: Shorts 08:00 and 10:00, long 12:00
+#          13:00 run: Shorts 14:00 and 16:00, long 16:30
+#          17:00 run: Shorts 18:00 and 19:00 (no long video in its window)
+#    fetch_time is when you want a run to START. GitHub starts scheduled
+#    runs hours late, so the GitHub schedule fires earlier by
+#    github_schedule_lead_minutes (BRAIN.md). A go-live time that has
+#    already passed by upload time goes live soon after upload instead.
+#    Every run sends a Telegram message when it starts, then one message
+#    per channel listing the uploaded videos and their go-live times.
+#
 #  RULES
 #    - Channel keys must match execution/channels.yaml exactly.
 #    - Put text and times in quotes. Times are 24-hour "HH:MM".
@@ -60,19 +76,21 @@ channels:
     avoid_words: ["dead", "killed", "blood", "massacre"]
                                            # Q10. Words the script must never use  Options: [] for none, or ["word1", "word2"]
     lookback_days: 5                       # Q11. Use trending videos from the last N days   Options: 1 to 30
-    fetch_time: "06:00"                    # Q12. When to fetch and prepare the day's videos  Options: any "HH:MM"
-    first_post_time: "07:00"               # Q13. When the first video goes live   Options: any "HH:MM" (at least 30 min after fetch_time)
-    post_frequency: "1 hour"               # Q14. Gap between videos               Options: "15 mins" | "30 mins" | "1 hour" | "3 hours"
-    videos_per_day: 6                      # Q15. Videos to post each day          Options: 1 to 50
+    fetch_time: ["06:00", "13:00", "17:00"]  # Q12. When each run starts           Options: "HH:MM" for one run a day, or ["HH:MM", ...] for several (videos are shared between them)
+    short_post_times: ["08:00", "10:00", "14:00", "16:00", "18:00", "19:00"]
+                                           # Q13. When each Short goes live (one per Short; replaces Q13 to Q15 below)   Options: list of "HH:MM"
+    # first_post_time: "08:00"             # Q13. Instead of short_post_times: first Short's go-live time
+    # post_frequency: "3 hours"            # Q14. ...then one every            Options: "15 mins" | "30 mins" | "1 hour" | "3 hours"
+    # videos_per_day: 4                    # Q15. ...this many Shorts a day    Options: 1 to 50
     days: "daily"                          # Q16. Which days to post               Options: "daily" | "weekdays" | "weekends" | [mon, wed, fri]
     timezone: "Asia/Kolkata"               # Q17. Timezone for all times above     Options: "Asia/Kolkata" | "America/New_York" | "Europe/London" | ...
     visibility: "public"                   # Q18. Who can see the videos           Options: "public" | "unlisted" | "private"
     test_run: false                        # Q19. Make videos without uploading    Options: true | false
     exclude_sources: []                    # Q20. YouTube channels never to take videos from   Options: [] | ["Channel Name 1", "Channel Name 2"]
     footage_style: "film"                  # Q21. Kind of stock clips used          Options: "any" | "animation" (cartoon) | "film" (real footage) | "mixed" (alternate)
-    long_videos_per_day: 2                 # Q22. Long landscape videos per day     Options: 0 (none) to 4
+    long_videos_per_day: 2                 # Q22. Long landscape videos per day (all runs together)   Options: 0 (none) to 4
     long_video_minutes: "5-7"              # Q23. Length of each long video         Options: 4 | 5 | 6 | 7 | "4-5" | "4-6" | "5-6" | "5-7" | "6-7" (a range varies each video; never longer than its upper number)
-    long_post_times: ["14:00", "20:00"]    # Q24. When each long video goes live    Options: one "HH:MM" per long video, e.g. ["14:00", "20:00"]
+    long_post_times: ["12:00", "16:30"]    # Q24. When each long video goes live    Options: one "HH:MM" per long video, e.g. ["12:00", "20:00"]
 
   kids_edu:                                # Q1
     run: true                              # Q2.  Options: true | false
@@ -90,10 +108,9 @@ channels:
     video_length_seconds: 30               # Q9.  Options: 15 | 30 | 45 | 60
     avoid_words: []                        # Q10. Options: [] | ["word1", "word2"]
     lookback_days: 5                       # Q11. Options: 1 to 30
-    fetch_time: "08:00"                    # Q12. Options: any "HH:MM"
-    first_post_time: "09:00"               # Q13. Options: any "HH:MM"
-    post_frequency: "1 hour"               # Q14. Options: "15 mins" | "30 mins" | "1 hour" | "3 hours"
-    videos_per_day: 8                      # Q15. Options: 1 to 50
+    fetch_time: ["06:00", "13:00", "17:00"]  # Q12. Options: "HH:MM" | ["HH:MM", ...]
+    short_post_times: ["08:30", "10:30", "14:30", "16:00", "18:00", "19:00"]
+                                           # Q13. Options: list of "HH:MM", one per Short
     days: "daily"                          # Q16. Options: "daily" | "weekdays" | "weekends" | [mon, wed, fri]
     timezone: "Asia/Kolkata"               # Q17
     visibility: "public"                   # Q18. Options: "public" | "unlisted" | "private"
@@ -102,7 +119,7 @@ channels:
     footage_style: "mixed"                 # Q21. Options: "any" | "animation" | "film" | "mixed" (cartoon and real clips alternate)
     long_videos_per_day: 2                 # Q22. Options: 0 (none) to 4
     long_video_minutes: "4-6"              # Q23. Options: 4 | 5 | 6 | 7 | "4-5" | "4-6" | "5-6" | "5-7" | "6-7"
-    long_post_times: ["17:00", "19:00"]    # Q24. Options: one "HH:MM" per long video
+    long_post_times: ["11:30", "15:30"]    # Q24. Options: one "HH:MM" per long video
 
 # =====================================================================
 #  TEMPLATE  (copy, paste under "channels:", remove the "# ", answer each)
@@ -121,7 +138,8 @@ channels:
 #    video_length_seconds: 30              # Q9. 15 | 30 | 45 | 60
 #    avoid_words: []                       # Q10. [] | ["word1", "word2"]
 #    lookback_days: 3                      # Q11. 1 to 30
-#    fetch_time: "06:00"                   # Q12. "HH:MM"
+#    fetch_time: "06:00"                   # Q12. "HH:MM" | ["HH:MM", "HH:MM"]
+#    short_post_times: []                  # Q13. list of "HH:MM" (one per Short), or leave out and use the next 3 lines
 #    first_post_time: "07:00"              # Q13. "HH:MM"
 #    post_frequency: "1 hour"              # Q14. "15 mins" | "30 mins" | "1 hour" | "3 hours"
 #    videos_per_day: 8                     # Q15. 1 to 50

@@ -3,8 +3,9 @@ name: Daily YouTube Multi-Agent Pipeline
 on:
   schedule:
     # BEGIN CHANNEL SCHEDULE (fetch times from execution/questions.yaml, updated by: python execution/execution.py --check)
-    - cron: '30 0 * * *'
-    - cron: '30 2 * * *'
+    - cron: '5 3 * * *'
+    - cron: '5 7 * * *'
+    - cron: '5 20 * * *'
     # END CHANNEL SCHEDULE
   workflow_dispatch:
     inputs:

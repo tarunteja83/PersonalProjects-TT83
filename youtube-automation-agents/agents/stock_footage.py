@@ -80,8 +80,17 @@ def search_terms(ai_client, item, profile, models, count):
     except Exception as e:
         print(f"[Stock footage] Could not get search terms from Gemini ({e}); using the channel niche.")
         terms = []
+    return with_generic_terms(terms, profile)[:count]
+
+
+def with_generic_terms(terms, profile):
     fallback = [w for w in profile.get("niche", "").replace(",", " ").split() if len(w) > 3]
-    return list(dict.fromkeys(terms + fallback + ["city", "nature", "people", "sky", "abstract"]))[:count]
+    return list(dict.fromkeys(terms + fallback + ["city", "nature", "people", "sky", "abstract"]))
+
+
+def topic_fallback(item, profile):
+    """Footage terms Gemini wrote alongside the script, topped up with generic ones."""
+    return with_generic_terms(list(item.get("topic_terms") or []), profile)[:5]
 
 
 def scene_terms(ai_client, scenes, item, profile, models):
@@ -119,7 +128,11 @@ def scene_terms(ai_client, scenes, item, profile, models):
                 terms[int(number) - 1] = options[:2]
     except Exception as e:
         print(f"[Stock footage] Could not get scene terms from Gemini ({e}); using topic terms.")
-    fallback = search_terms(ai_client, item, profile, models, 5) if len(terms) < len(scenes) else []
+    fallback = []
+    if len(terms) < len(scenes):
+        # The script request already returned footage terms for the whole topic; only ask again if it didn't
+        fallback = topic_fallback(item, profile) if item.get("topic_terms") else \
+            search_terms(ai_client, item, profile, models, 5)
     return [terms.get(i) or [fallback[i % len(fallback)]] for i in range(len(scenes))]
 
 

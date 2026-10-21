@@ -8,8 +8,13 @@ Read `youtube-automation-agents/execution/execution.md` (full user guide) and th
 ## Channels (live, created by the owner under a different Google account than the Cloud project)
 | Key | Channel | Link | Posting (IST) |
 |---|---|---|---|
-| `geopolitics_war` | Frontline Ledger TT83 | youtube.com/@frontline-ledger-tt83 | fetch 06:00; 6 Shorts hourly 07:00 to 12:00; 2 long (5 to 7 min) at 14:00, 20:00 |
-| `kids_edu` | WonderSprout Kids TT83 (made for kids) | youtube.com/channel/UCf9u1ZaejKPPA-oOD8oXVfg | fetch 08:00; 8 Shorts hourly 09:00 to 16:00; 2 long (4 to 6 min max) at 17:00, 19:00 |
+| `geopolitics_war` | Frontline Ledger TT83 | youtube.com/@frontline-ledger-tt83 | Shorts 08:00, 10:00, 14:00, 16:00, 18:00, 19:00; long (5 to 7 min) 12:00, 16:30 |
+| `kids_edu` | WonderSprout Kids TT83 (made for kids) | youtube.com/channel/UCf9u1ZaejKPPA-oOD8oXVfg | Shorts 08:30, 10:30, 14:30, 16:00, 18:00, 19:00; long (4 to 6 min max) 11:30, 15:30 |
+
+Both channels run together three times a day (`fetch_time: ["06:00", "13:00", "17:00"]`): morning and afternoon make
+1 long + 2 Shorts per channel, the evening run 2 Shorts per channel (16 videos a day). Each run owns the go-live slots
+between its fetch time and the next one (`plan_run` in `execution.py`). The cron fires `github_schedule_lead_minutes`
+(BRAIN.md, 265) early because GitHub starts scheduled runs 4 to 5 hours late. The owner plans to add more channels.
 
 ## How it works (short)
 - **One entry point:** `execution/execution.py`. With no arguments it runs every channel with `run: true`. GitHub uses
@@ -46,6 +51,13 @@ Read `youtube-automation-agents/execution/execution.md` (full user guide) and th
   MoviePy remains only for `footage.source: "youtube"`.
 - **Upload safety:** `channels.yaml` `channel_url` is checked against the logged-in channel before saving a login and
   before every upload.
+- **Gemini quota:** runs on 20 and 21 Oct 2026 failed (0 uploaded) when every model returned 429 mid-run. Now the
+  script request also returns title, description, hashtags and footage terms (about 2 requests per video), and the
+  publisher falls back to the source video's title, so rendered videos still upload.
+- **GitHub schedule delay:** scheduled runs started 4 to 5 hours after the cron time, so the cron is shifted earlier
+  (see above). Passed go-live slots go live soon after upload; the Telegram start message shows how early or late.
+- **Telegram:** each run sends a start message, then one message per channel (videos, links, go-live times, hashtags).
+- **Hashtags:** Gemini's topic hashtags plus the trending source video's own, up to 8, also used as search tags.
 - **Gemini:** `gemini-2.5-flash` is retired for this key. `ai_models` in BRAIN.md falls back across 3.8 → 3.7 → 3.5
   → flash-latest, and retries dropped connections.
 
@@ -67,7 +79,9 @@ Read `youtube-automation-agents/execution/execution.md` (full user guide) and th
 - **Limits:**
   - YouTube: 100 uploads and 100 searches a day per project.
   - Pixabay: 100 requests a minute; searches are paced.
-  - GitHub Actions: 2,000 free minutes a month on a private repo; `--check` estimates usage, currently ~1,600.
+  - GitHub Actions: the repo was made **public** on 2026-10-21 (unlimited minutes; `github_repo_public: true` in
+    BRAIN.md). Run logs are public, so never print secrets. YouTube searches: ~30 a day per channel, so the 100/day
+    search limit caps the project at about 3 channels on this schedule.
 
 ## Conventions
 - **Committing:** commit on a new descriptively named branch, push it, then fast-forward `main` and push. The owner

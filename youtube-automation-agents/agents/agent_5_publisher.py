@@ -1,4 +1,5 @@
 import os
+import re
 import json
 from datetime import datetime, timedelta, timezone
 from google import genai
@@ -15,6 +16,8 @@ from brain import YOUTUBE_SCOPES as SCOPES, channel_matches, item_matches
 
 UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 UPLOAD_RETRIES = 5
+PASSED_SLOT_GAP = timedelta(minutes=30)
+MAX_HASHTAGS = 8
 
 class PublisherAgent:
     def __init__(self, config, instructions):
@@ -68,8 +71,25 @@ class PublisherAgent:
             )
         print(f"[Agent 5: Publisher] Confirmed channel: {snippet['title']}")
 
+    @staticmethod
+    def fallback_seo_package(item, max_title):
+        """Used when Gemini is unavailable: the source video's own title, and the opening of our narration."""
+        title = re.sub(r"#\w+", "", item.get("original_title") or "").replace('"', "")
+        title = " ".join(title.split()).strip(" |-:") or "New video"
+        if len(title) > max_title:
+            title = title[:max_title - 3].rsplit(" ", 1)[0] + "..."
+        script = " ".join((item.get("generated_script") or "").split())
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", script) if s.strip()]
+        return title, " ".join(sentences[:2])[:400]
+
     def generate_seo_package(self, item):
         clean_creator_name = item["original_creator"].replace("@", "").strip()
+        max_title = 75 if item.get("format") == "long" else 65
+        if item.get("seo_title"):
+            # Written together with the script, so no extra Gemini request is needed
+            new_title = item["seo_title"].replace('"', '').strip()[:max_title]
+            return new_title, self.finish_description(item, item.get("seo_description") or "",
+                                                      item.get("seo_hashtags") or "", clean_creator_name)
 
         prompt = (
             f"Follow these system instructions: {self.instructions}\n"
@@ -84,28 +104,76 @@ class PublisherAgent:
                "Generate a viral YouTube Short Title (maximum 60 characters, no quotes) on Line 1.\n"
                "On the following lines, write a 2-sentence SEO description followed by 5 relevant hashtags.")
         )
-        resp = generate_text(self.ai_client, prompt, self.config.get("ai_models")).split("\n")
+        try:
+            resp = generate_text(self.ai_client, prompt, self.config.get("ai_models")).split("\n")
+            new_title = resp[0].replace('"', '').strip()[:max_title]
+            seo_body = "\n".join(resp[1:]).strip()
+        except Exception as e:
+            # Gemini quota ran out or it is down: the video is already rendered, so publish it under the
+            # source video's title instead of losing the slot
+            print(f"[Agent 5: Publisher] Gemini could not write the title for {item['video_id']}, "
+                  f"using the source video's title: {str(e)[:160]}")
+            new_title, seo_body = self.fallback_seo_package(item, max_title)
 
-        new_title = resp[0].replace('"', '').strip()[:75 if item.get("format") == "long" else 65]
-        seo_body = "\n".join(resp[1:]).strip()
+        # Gemini's hashtags may sit inside the text; gather them so they are merged with the trending ones
+        gemini_tags = " ".join(re.findall(r"#\w+", seo_body))
+        seo_body = "\n".join(line for line in seo_body.splitlines() if not re.fullmatch(r"(\s*#\w+)+\s*", line))
+        return new_title, self.finish_description(item, seo_body.strip(), gemini_tags, clean_creator_name)
 
+    def hashtags(self, item, gemini_tags):
+        """Topic hashtags from Gemini plus the ones the trending source video uses, without the source's own brand.
+
+        Shorts start with #shorts. YouTube shows the first three above the title and ignores all of them past 60,
+        so at most MAX_HASHTAGS are kept.
+        """
+        source_text = f"{item.get('original_title') or ''} {item.get('original_description') or ''}"
+        creator = re.sub(r"\W", "", (item.get("original_creator") or "").lower())
+        trending = [t for t in re.findall(r"#\w+", source_text)
+                    if not (creator and (creator in t.lower() or t.lower().lstrip("#") in creator))]
+        tags = (["#shorts"] if item.get("format") != "long" else []) + re.findall(r"#\w+", gemini_tags) + trending
+        if len(tags) <= 1:
+            # Nothing from Gemini or the source: fall back to the channel's niche words
+            tags += ["#" + w.lower() for w in re.findall(r"[A-Za-z]{4,}", self.profile.get("niche", ""))][:4]
+        unique = {}
+        for tag in tags:
+            if item.get("format") == "long" and tag.lower() == "#shorts":
+                continue
+            unique.setdefault(tag.lower(), tag)
+        return list(unique.values())[:MAX_HASHTAGS]
+
+    def search_tags(self, item):
+        """YouTube's hidden search tags: the hashtags as words, the footage topic terms and the channel name."""
+        tags = [t.lstrip("#") for t in item.get("upload_hashtags") or []] + list(item.get("topic_terms") or []) + \
+            [self.profile["channel_name"].replace(" ", "")]
+        kept, length = [], 0
+        for tag in dict.fromkeys(t.strip() for t in tags if t.strip()):
+            # YouTube rejects the upload if the tags add up to more than 500 characters
+            if length + len(tag) + 3 > 450:
+                break
+            kept.append(tag)
+            length += len(tag) + 3
+        return kept
+
+    def finish_description(self, item, text, gemini_tags, clean_creator_name):
+        tags = self.hashtags(item, gemini_tags)
+        item["upload_hashtags"] = tags
+        return "\n\n".join(p for p in (text, " ".join(tags)) if p) + self.credit_block(item, clean_creator_name)
+
+    def credit_block(self, item, clean_creator_name):
         if item.get("footage_paths"):
             # Pixabay and Pexels ask that you show where the footage came from
             site = {"pexels": ("Pexels", "https://www.pexels.com")}.get(item.get("footage_provider"),
                                                                          ("Pixabay", "https://pixabay.com"))
-            credit_block = (
+            return (
                 f"\n\n---\n"
                 f"Stock footage: {site[0]} ({site[1]}), videos by {', '.join(item.get('footage_credits') or [site[0]])}\n"
                 f"Commentary produced by {self.profile['channel_name']}."
             )
-        else:
-            credit_block = (
-                f"\n\n---\n"
-                f"Visual Reference & Credit: {clean_creator_name}\n"
-                f"Commentary and analysis produced by {self.profile['channel_name']} under Fair Use guidelines."
-            )
-
-        return new_title, f"{seo_body}{credit_block}"
+        return (
+            f"\n\n---\n"
+            f"Visual Reference & Credit: {clean_creator_name}\n"
+            f"Commentary and analysis produced by {self.profile['channel_name']} under Fair Use guidelines."
+        )
 
     @staticmethod
     def upload(youtube, path, body):
@@ -134,21 +202,24 @@ class PublisherAgent:
         execution.py sets publish_plan to either
           {"first_utc": ISO time, "interval_minutes": gap}: slots repeat every interval from first_utc, and if
           preparing the videos took past some slots, the next future slot is used (Shorts); or
-          {"times_utc": [ISO times]}: one fixed time per video, moved to the next day if already past (long videos).
+          {"times_utc": [ISO times]}: this run's go-live slots, one per video. A slot that passed while the
+          videos were being made (GitHub often starts scheduled runs hours late) goes live soon instead, keeping
+          at least PASSED_SLOT_GAP between videos.
         """
         plan = self.profile.get("publish_plan")
         if not plan:
             return None
         if "times_utc" in plan:
             earliest = (now or datetime.now(timezone.utc)) + timedelta(minutes=10)
-            # Move any time that has already passed to the next day, then hand out the free slots in order
-            upcoming = []
-            for t in (datetime.fromisoformat(t) for t in plan["times_utc"]):
-                while t < earliest:
-                    t += timedelta(days=1)
-                upcoming.append(t)
-            upcoming.sort()
-            return upcoming[index % len(upcoming)] + timedelta(days=index // len(upcoming))
+            slots, previous = [], None
+            for t in sorted(datetime.fromisoformat(t) for t in plan["times_utc"]):
+                if t < earliest:
+                    t = earliest if previous is None else max(earliest, previous + PASSED_SLOT_GAP)
+                elif previous is not None and t < previous + PASSED_SLOT_GAP:
+                    t = previous + PASSED_SLOT_GAP
+                slots.append(t)
+                previous = t
+            return slots[index] if index < len(slots) else None
         first = datetime.fromisoformat(plan["first_utc"])
         interval = timedelta(minutes=plan.get("interval_minutes") or 0)
         earliest = (now or datetime.now(timezone.utc)) + timedelta(minutes=10)
@@ -173,6 +244,13 @@ class PublisherAgent:
             print(f"[Agent 5: Publisher] Skipping {item['video_id']}: its edited video file no longer exists.")
             item["status"] = "expired"
             items_to_publish.remove(item)
+        plan = self.profile.get("publish_plan") or {}
+        if "times_utc" in plan and len(items_to_publish) > len(plan["times_utc"]):
+            # This run has a fixed number of go-live slots; the oldest finished videos fill them first and
+            # the rest wait for the next run
+            waiting = len(items_to_publish) - len(plan["times_utc"])
+            items_to_publish = items_to_publish[:len(plan["times_utc"])]
+            print(f"[Agent 5: Publisher] {waiting} more finished video(s) will be uploaded in a later run.")
         if not items_to_publish:
             print("[Agent 5: Publisher] No edited videos pending upload.")
             return
@@ -193,8 +271,7 @@ class PublisherAgent:
                     "title": title,
                     "description": description,
                     "categoryId": self.profile["category_id"],
-                    "tags": ([] if item.get("format") == "long" else ["shorts"])
-                            + [self.active_key, self.profile["channel_name"].replace(" ", "")]
+                    "tags": self.search_tags(item)
                 },
                 "status": {
                     "privacyStatus": self.profile.get("privacy_status", self.upload_rules["privacy_status"]),
@@ -214,6 +291,10 @@ class PublisherAgent:
             try:
                 response = self.upload(youtube, item["edited_video_path"], body)
                 item["uploaded_youtube_id"] = response["id"]
+                item["uploaded_title"] = title
+                item["uploaded_tags"] = body["snippet"]["tags"]
+                item["publish_at"] = body["status"].get("publishAt")
+                item["uploaded_at"] = datetime.now(timezone.utc).isoformat()
                 item["status"] = "published"
                 print(f"[Agent 5: Publisher] SUCCESS! Uploaded Video ID: {response['id']}")
             except Exception as e:

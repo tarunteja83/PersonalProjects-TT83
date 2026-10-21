@@ -104,8 +104,8 @@ class OrchestratorAgent:
         if not dry_run:
             PublisherAgent(config, self.instructions).run()
 
-    def execute_pipeline(self, channel_key, dry_run=False, formats=FORMATS):
-        """Run every agent for one channel (Shorts, then long videos) and return the number of videos uploaded."""
+    def execute_pipeline(self, channel_key, dry_run=False, formats=FORMATS, planned=None):
+        """Run every agent for one channel (long videos, then Shorts) and return the number of videos uploaded."""
         base = self.config["profiles"][channel_key]
         published_before = {i["video_id"] for i in self.manifest_items(channel_key) if i["status"] == "published"}
         print("====================================================")
@@ -113,7 +113,7 @@ class OrchestratorAgent:
         print("====================================================")
 
         for fmt in formats:
-            if fmt == "long" and not base["long"]["count"]:
+            if (fmt == "long" and not base["long"]["count"]) or (fmt == "short" and not base["max_videos_per_run"]):
                 continue
             config = copy.deepcopy(self.config)
             config["active_profile"] = channel_key
@@ -128,10 +128,10 @@ class OrchestratorAgent:
         config = copy.deepcopy(self.config)
         config["active_profile"] = channel_key
         CleanupAgent(config).run()
-        TelegramNotifierAgent(config).run()
-
         uploaded = [i for i in self.manifest_items(channel_key)
                     if i["status"] == "published" and i["video_id"] not in published_before]
+        TelegramNotifierAgent(config).run(uploaded, planned)
+
         print("\n====================================================")
         print(f" {channel_key}: {len(uploaded)} video(s) uploaded")
         for item in uploaded:

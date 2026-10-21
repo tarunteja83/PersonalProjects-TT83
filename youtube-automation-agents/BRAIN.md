@@ -6,6 +6,13 @@ Channels are listed on the channel page: `execution/channels.yaml`. How to run e
 # Gemini models for scripts and titles, tried in order (a busy or retired model falls through to the next)
 ai_models: ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-flash-latest"]
 
+# GitHub starts scheduled runs late (4 to 5 hours in October 2026). The GitHub schedule fires this many minutes
+# BEFORE each fetch_time, so runs actually start near fetch_time. 0 = no shift. The Telegram start message says how
+# early or late each run started; adjust this if they drift.
+github_schedule_lead_minutes: 265
+# true when the GitHub repository is public (unlimited Actions minutes, so --check skips the minutes warning)
+github_repo_public: true
+
 storage_paths:
   base_dir: "./GDrive_Mount/YouTube_Automation"
   tokens_dir: "./GDrive_Mount/YouTube_Automation/00_tokens"
@@ -69,16 +76,16 @@ cleanup_rules:                  # GitHub runs; laptop runs keep files in YouTube
 | `execution/execution.py` | The only entry point; reads the three files above and runs the agents |
 
 ### What one run does, in order
-1. **Choose channels**: a scheduled run picks the channels whose `fetch_time` matches; a manual run uses the channel typed in.
+1. **Choose channels**: a scheduled run picks the channels whose `fetch_time` (one time or a list) matches; a manual run uses the channel typed in. With several fetch times a day, each run makes only the videos whose go-live times fall before the channel's next run.
 2. **Clear lost work**: unfinished videos whose files are gone (an interrupted earlier run) are marked `expired`.
 3. **Long videos first, then Shorts.** For each format:
    1. **Agent 1, Scout**: searches YouTube for trending videos on the channel's search phrases (Shorts topics from Shorts, long topics from 4 to 20 minute videos), in the channel's language, rotating phrases and source channels.
-   2. **Agent 3, Script & Voice**: Gemini writes an original script for the topic (hook first; long videos get 3 to 5 parts and a recap). The voice narrates it, sentence timings are recorded, and if the narration runs longer than allowed the script is shortened and narrated again. The narration is split into scenes (3 per Short, ~15 s each in long videos).
+   2. **Agent 3, Script & Voice**: Gemini writes an original script for the topic, and in the same request the upload title, description, hashtags and footage terms (hook first; long videos get 3 to 5 parts and a recap). The voice narrates it, sentence timings are recorded, and if the narration runs longer than allowed the script is shortened and narrated again. The narration is split into scenes (3 per Short, ~15 s each in long videos).
    3. **Agent 2, Footage**: Gemini picks a specific and a backup search term from each scene's words; one stock clip per scene is downloaded from Pixabay (or Pexels).
    4. **Agent 4, Editor**: FFmpeg cuts each clip to its scene's narration time, fits it to 1080x1920 (Short) or 1920x1080 (long), joins them, adds the watermark and narration (no original audio), and appends the LIKE then SUBSCRIBE end card.
-   5. **Agent 5, Publisher**: confirms the YouTube login is the right channel, has Gemini write the title, description and hashtags (with stock footage credit), and uploads in resumable chunks with its go-live time (Shorts: `first_post_time` then every `post_frequency`; long: `long_post_times`).
+   5. **Agent 5, Publisher**: confirms the YouTube login is the right channel, uses the title, description and hashtags written with the script (the source video's title if Gemini was unavailable) plus the stock footage credit, and uploads in resumable chunks with its go-live time (Shorts: `first_post_time` then every `post_frequency`; long: `long_post_times`; a time already passed goes live soon after upload).
 4. **Agent 6, Cleanup**: deletes files no longer needed (GitHub) or day folders older than `keep_days` (laptop).
-5. **Agent 7, Telegram**: posts links to everything uploaded.
+5. **Agent 7, Telegram**: a "run started" message, then one message per channel with each uploaded video's link and go-live time.
 
 ### Video status flow (in the manifest, `01_manifests/trends.json`)
 `discovered` → `voiced` → `ready_to_edit` → `edited` → `published`

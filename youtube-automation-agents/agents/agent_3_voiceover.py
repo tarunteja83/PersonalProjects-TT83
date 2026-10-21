@@ -43,6 +43,29 @@ def group_scenes(sentences, total_seconds, scene_seconds):
     return scenes
 
 
+META_FIELDS = {"TITLE": "seo_title", "DESCRIPTION": "seo_description", "HASHTAGS": "seo_hashtags",
+               "FOOTAGE": "topic_terms"}
+
+
+def parse_script_reply(text):
+    """Split Gemini's reply into (narration, {seo_title, seo_description, seo_hashtags, topic_terms}).
+
+    If the reply ignores the layout, the whole reply is the narration and the publisher writes the title later.
+    """
+    head, marker, body = text.partition("SCRIPT:")
+    if not marker:
+        return text.strip(), {}
+    meta = {}
+    for line in head.splitlines():
+        label, _, value = line.strip().lstrip("*# ").partition(":")
+        field = META_FIELDS.get(label.strip("* ").upper())
+        if field and value.strip():
+            meta[field] = value.strip().strip("*").strip().strip('"')
+    if "topic_terms" in meta:
+        meta["topic_terms"] = [t.strip().strip('"') for t in meta["topic_terms"].split(",") if t.strip()]
+    return body.strip().strip("*").strip(), meta
+
+
 class VoiceoverAgent:
     def __init__(self, config, instructions):
         self.config = config
@@ -90,10 +113,27 @@ class VoiceoverAgent:
         )
         if avoid_terms:
             prompt += f"Never use these words or topics: {', '.join(avoid_terms)}.\n"
-        prompt += (f"Stay within {target_words} words; a little shorter is fine, longer is not. "
-                   "Output ONLY the spoken narration text. No stage directions, no brackets, no intro labels.")
+        long = item.get("format") == "long"
+        prompt += (
+            f"Stay within {target_words} words; a little shorter is fine, longer is not. The narration must be "
+            "only spoken text: no stage directions, no brackets, no intro labels.\n\n"
+            # The upload title and footage ideas come from this same request, so each video costs one call
+            "Reply in exactly this layout:\n"
+            f"TITLE: a {'click-worthy YouTube video' if long else 'viral YouTube Short'} title, at most "
+            f"{70 if long else 60} characters, no quotes, in the script language\n"
+            f"DESCRIPTION: a {3 if long else 2}-sentence SEO description in the script language, with no credits "
+            "or source names (credits are added automatically)\n"
+            "HASHTAGS: 5 hashtags separated by spaces that people actively search on YouTube for this topic right "
+            "now: 2 broad, popular ones for the niche and 3 specific to this story (no spaces inside a hashtag"
+            f"{', do not use #shorts' if long else ''})\n"
+            "FOOTAGE: 5 English stock-footage search terms (1 to 3 words each, comma-separated) for visuals "
+            "that match the whole topic"
+            + (", child-friendly" if self.profile.get("made_for_kids") else "") + "\n"
+            "SCRIPT:\n<the narration>"
+        )
 
-        script = generate_text(self.ai_client, prompt, self.config.get("ai_models"))
+        script, meta = parse_script_reply(generate_text(self.ai_client, prompt, self.config.get("ai_models")))
+        item.update(meta)
         return self.fit_length(script, target_words)
 
     def fit_length(self, script, target_words):

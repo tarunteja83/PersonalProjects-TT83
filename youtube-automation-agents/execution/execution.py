@@ -14,6 +14,7 @@ GitHub uses: --scheduled --cron "<cron>"  and  --due --cron "<cron>"
 """
 import argparse
 import copy
+import html
 import os
 import re
 import sys
@@ -31,7 +32,7 @@ os.chdir(PROJECT_DIR)
 
 from brain import (  # noqa: E402
     DEFAULT_VOICES, FREQUENCIES, LANGUAGES, MAX_VIDEOS_PER_DAY, SPEEDS, YOUTUBE_SCOPES,
-    channel_matches, cron_lines, due_profiles, load_brain, parse_time,
+    channel_matches, cron_lines, due_profiles, fetch_time_for_cron, load_brain, parse_time,
 )
 
 SCHEDULE_BEGIN = "# BEGIN CHANNEL SCHEDULE"
@@ -39,10 +40,10 @@ SCHEDULE_END = "# END CHANNEL SCHEDULE"
 RUNNING_ON_GITHUB = os.getenv("GITHUB_ACTIONS") == "true"
 DAILY_UPLOAD_LIMIT = 100
 DAILY_SEARCH_LIMIT = 100
-# Rough GitHub Actions build times, used only for the --check estimate
-GITHUB_SETUP_MINUTES = 3
-MINUTES_PER_SHORT = 2
-MINUTES_PER_LONG = 5
+# Rough GitHub Actions build times, used only for the --check estimate (measured on October 2026 runs)
+GITHUB_SETUP_MINUTES = 2
+MINUTES_PER_SHORT = 3
+MINUTES_PER_LONG = 12
 GITHUB_FREE_MINUTES = 2000
 
 VOICE_CHOICES = {
@@ -145,6 +146,9 @@ def apply_overrides(profile, overrides):
             profile[field] = overrides[key]
     if overrides.get("frequency"):
         profile["posting"]["frequency_minutes"] = FREQUENCIES[overrides["frequency"]]
+    if overrides.get("first_post") or overrides.get("frequency"):
+        # A one-off first time or gap replaces the fixed short_post_times
+        profile["posting"]["post_times"] = []
     if overrides.get("first_post"):
         profile["posting"]["first_post_time"] = overrides["first_post"]
     if overrides.get("videos") and profile["long"]["count"]:
@@ -152,15 +156,32 @@ def apply_overrides(profile, overrides):
         profile["long"]["count"] = min(profile["long"]["count"], overrides["videos"])
     if overrides.get("post_now"):
         profile["posting"]["first_post_time"] = None
+        profile["posting"]["post_times"] = []
         profile["long"]["post_times"] = []
+
+
+def next_occurrences(times, tz, now, count):
+    """The next `count` go-live times (UTC) from a list of daily "HH:MM", at least 30 minutes from now."""
+    earliest = now.astimezone(tz) + timedelta(minutes=30)
+    upcoming = []
+    for days in range(0, count // max(len(times), 1) + 2):
+        for t in times:
+            local = datetime.combine(earliest.date() + timedelta(days=days), parse_time(t), tzinfo=tz)
+            if local >= earliest:
+                upcoming.append(local)
+    return [t.astimezone(timezone.utc) for t in sorted(upcoming)[:count]]
 
 
 def publish_plan(profile, now=None):
     """Turn first_post_time and post_frequency into the plan Agent 5 uses to schedule go-live times."""
+    tz = ZoneInfo(profile["schedule"]["timezone"])
+    if profile["posting"].get("post_times"):
+        upcoming = next_occurrences(profile["posting"]["post_times"], tz, now or datetime.now(tz),
+                                    profile["max_videos_per_run"])
+        return {"times_utc": [t.isoformat() for t in upcoming]}
     first_post = profile["posting"]["first_post_time"]
     if not first_post:
         return None
-    tz = ZoneInfo(profile["schedule"]["timezone"])
     today = (now or datetime.now(tz)).astimezone(tz).date()
     first_local = datetime.combine(today, parse_time(first_post), tzinfo=tz)
 
@@ -191,19 +212,148 @@ def long_publish_plan(profile, now=None):
     return {"times_utc": [t.isoformat() for t in sorted(times)]}
 
 
+def day_slots(profile, day):
+    """Go-live times (local) of one posting day that starts on `day`: (Shorts, long videos).
+
+    A time at or before the day's first fetch time belongs to the next morning (e.g. fetch 23:00, post 07:00).
+    """
+    tz = ZoneInfo(profile["schedule"]["timezone"])
+    fetches = sorted(parse_time(t) for t in profile["schedule"]["post_times"])
+
+    def at(value):
+        local = datetime.combine(day, parse_time(value), tzinfo=tz)
+        return local + timedelta(days=1) if fetches and parse_time(value) <= fetches[0] else local
+
+    shorts = []
+    if profile["posting"].get("post_times"):
+        shorts = [at(t) for t in profile["posting"]["post_times"]]
+    elif profile["posting"]["first_post_time"]:
+        first, gap = at(profile["posting"]["first_post_time"]), timedelta(minutes=profile["posting"]["frequency_minutes"])
+        shorts = [first + gap * k for k in range(profile["max_videos_per_run"])]
+    longs = [at(t) for t in profile["long"]["post_times"][:profile["long"]["count"]]]
+    return shorts, longs
+
+
+def run_window(profile, now=None, fetch=None):
+    """(start, end) local times of this run: from its fetch time up to the channel's next fetch time.
+
+    fetch is the fetch time behind a scheduled run, which GitHub may start hours early or late
+    (github_schedule_lead_minutes), so its nearest occurrence is used; manual runs use the window that contains
+    the current time.
+    """
+    tz = ZoneInfo(profile["schedule"]["timezone"])
+    now_local = (now or datetime.now(tz)).astimezone(tz)
+    times = sorted(parse_time(t) for t in profile["schedule"]["post_times"])
+    if not times:
+        return None
+
+    def latest(t):
+        local = datetime.combine(now_local.date(), t, tzinfo=tz)
+        return local - timedelta(days=1) if local > now_local else local
+
+    if fetch in times:
+        start = min((datetime.combine(now_local.date() + timedelta(days=d), fetch, tzinfo=tz) for d in (-1, 0, 1)),
+                    key=lambda local: abs(local - now_local))
+    else:
+        start = max(latest(t) for t in times)
+
+    def following(t):
+        local = datetime.combine(start.date(), t, tzinfo=tz)
+        return local + timedelta(days=1) if local <= start else local
+
+    return start, min(following(t) for t in times)
+
+
+def run_slots(profile, now=None, fetch=None):
+    """This run's go-live times in UTC, (Shorts, long videos): the day's slots that fall inside its window."""
+    window = run_window(profile, now, fetch)
+    if not window:
+        return None
+    start, end = window
+    shorts, longs = set(), set()
+    for offset in (-1, 0, 1):
+        day_shorts, day_longs = day_slots(profile, start.date() + timedelta(days=offset))
+        shorts.update(t for t in day_shorts if start <= t < end)
+        longs.update(t for t in day_longs if start <= t < end)
+    return ([t.astimezone(timezone.utc) for t in sorted(shorts)],
+            [t.astimezone(timezone.utc) for t in sorted(longs)])
+
+
+def plan_run(profile, fetch=None, shared=True, now=None):
+    """Set this run's video counts and go-live plans on the profile.
+
+    shared: the day's videos are shared between the channel's runs (one per fetch time), each run making the
+    videos whose go-live times fall before the next run. Off for one-off runs that set their own counts or times.
+    """
+    profile["publish_plan"] = publish_plan(profile, now)
+    profile["long_publish_plan"] = long_publish_plan(profile, now)
+    slots = run_slots(profile, now, fetch) if shared else None
+    if not slots:
+        return
+    shorts, longs = slots
+    if profile["posting"].get("post_times") or profile["posting"]["first_post_time"]:
+        profile["max_videos_per_run"] = len(shorts)
+        profile["publish_plan"] = {"times_utc": [t.isoformat() for t in shorts]}
+    if profile["long"]["post_times"]:
+        profile["long"]["count"] = len(longs)
+        profile["long_publish_plan"] = {"times_utc": [t.isoformat() for t in longs]} if longs else None
+
+
+def plan_times(plan, tz):
+    if not plan or "times_utc" not in plan:
+        return []
+    return [datetime.fromisoformat(t).astimezone(ZoneInfo(tz)).strftime("%H:%M") for t in plan["times_utc"]]
+
+
+def describe_run(profile, formats=("long", "short")):
+    """e.g. '1 long (12:00) + 2 Shorts (08:00, 11:00)' for the plan set by plan_run."""
+    tz = profile["schedule"]["timezone"]
+    parts = []
+    if "long" in formats and profile["long"]["count"]:
+        times = plan_times(profile.get("long_publish_plan"), tz)
+        parts.append(f"{profile['long']['count']} long" + (f" ({', '.join(times)})" if times else ""))
+    if "short" in formats and profile["max_videos_per_run"]:
+        times = plan_times(profile.get("publish_plan"), tz)
+        count = profile["max_videos_per_run"]
+        parts.append(f"{count} Short{'s' if count > 1 else ''}"
+                     + (f" ({', '.join(times)})" if times else " (live on upload)"))
+    return " + ".join(parts) or "no videos"
+
+
+def describe_runs(profile):
+    """Each daily run and the videos it makes, e.g. '06:00 -> 1 long (12:00) + 2 Shorts (08:00, 11:00)'."""
+    tz = ZoneInfo(profile["schedule"]["timezone"])
+    lines = []
+    for fetch in sorted(parse_time(t) for t in profile["schedule"]["post_times"]):
+        preview = copy.deepcopy(profile)
+        at_fetch = datetime.combine(datetime.now(tz).date(), fetch, tzinfo=tz)
+        plan_run(preview, fetch=fetch, now=at_fetch)
+        lines.append(f"{fetch:%H:%M} -> {describe_run(preview)}")
+    return lines
+
+
+def run_label(fetch):
+    if fetch is None:
+        return "Manual run"
+    return "Morning run" if fetch.hour < 12 else "Afternoon run" if fetch.hour < 17 else "Evening run"
+
+
 def describe_long(profile):
     long = profile["long"]
     if not long["count"]:
         return "no long videos"
     minutes = str(long["minutes"]).replace("-", " to ")
     return (f"{long['count']} long landscape video(s) of {minutes} min, live at "
-            f"{', '.join(long['post_times'][:long['count']])}")
+            f"{', '.join(f'{parse_time(t):%H:%M}' for t in long['post_times'][:long['count']])}")
 
 
 def describe_plan(profile):
     posting = profile["posting"]
     count = profile["max_videos_per_run"]
-    fetch = ", ".join(str(t) for t in profile["schedule"]["post_times"]) or "manual runs only"
+    fetch = ", ".join(f"{parse_time(t):%H:%M}" for t in profile["schedule"]["post_times"]) or "manual runs only"
+    if posting.get("post_times"):
+        return f"fetch {fetch} | {count} video(s) live at " + ", ".join(
+            f"{parse_time(t):%H:%M}" for t in posting["post_times"])
     if not posting["first_post_time"]:
         return f"fetch {fetch} | {count} video(s), live immediately after upload"
     freq = next((name for name, minutes in FREQUENCIES.items() if minutes == posting["frequency_minutes"]),
@@ -252,7 +402,30 @@ def preflight(config, keys, dry_runs):
     return ready
 
 
-def run_channels(config, instructions, keys, overrides=None, force_dry_run=False, formats=("long", "short")):
+def notify_start(config, keys, fetches, formats):
+    """Telegram message at the start of a run: which videos each channel is preparing and when they go live."""
+    from agents.agent_7_notifier import send_telegram
+    first = config["profiles"][keys[0]]
+    tz = ZoneInfo(first["schedule"]["timezone"])
+    now = datetime.now(tz)
+    fetch = fetches.get(keys[0])
+    started = f"started {now:%H:%M} {now:%Z}"
+    if fetch:
+        planned_at = min((datetime.combine(now.date() + timedelta(days=d), fetch, tzinfo=tz) for d in (-1, 0, 1)),
+                         key=lambda local: abs(local - now))
+        late = int((now - planned_at).total_seconds() // 60)
+        off = f"{abs(late) // 60}h {abs(late) % 60:02d}m {'late' if late > 0 else 'early'}"
+        started = f"planned {fetch:%H:%M}, {started}" + (f" ({off})" if abs(late) >= 15 else "")
+    lines = [f"🎬 <b>{run_label(fetch)} started</b> ({started})", "Video preparation in progress:"]
+    for key in keys:
+        p = config["profiles"][key]
+        lines.append(f"• <b>{html.escape(p['channel_name'])}</b>: {describe_run(p, formats)}")
+    lines.append("A message per channel follows once its videos are uploaded and scheduled.")
+    send_telegram("\n".join(lines))
+
+
+def run_channels(config, instructions, keys, overrides=None, force_dry_run=False, formats=("long", "short"),
+                 cron=None):
     from dotenv import load_dotenv
     load_dotenv(os.path.join(PROJECT_DIR, ".env"))
 
@@ -268,19 +441,36 @@ def run_channels(config, instructions, keys, overrides=None, force_dry_run=False
     from orchestrator import OrchestratorAgent
     orchestrator = OrchestratorAgent(config, instructions)
     failed, results = [], {}
+    # One-off counts or times replace the shared daily plan for this run
+    shared = not any((overrides or {}).get(k) for k in ("videos", "first_post", "frequency", "post_now"))
+    fetches, planned = {}, {}
     for key in ready:
         profile = config["profiles"][key]
-        print(f"\n>>> {key}: " + (f"Shorts: {describe_plan(profile)}" if "short" in formats else "")
-              + (f" | Long: {describe_long(profile)}" if "long" in formats else ""))
+        fetches[key] = fetch_time_for_cron(profile, cron) if cron else None
+        plan_run(profile, fetch=fetches[key], shared=shared)
+        planned[key] = (profile["max_videos_per_run"] if "short" in formats else 0) + \
+                       (profile["long"]["count"] if "long" in formats else 0)
+    if not all(dry_runs[key] for key in ready):
+        notify_start(config, ready, fetches, formats)
+
+    for key in ready:
+        profile = config["profiles"][key]
+        print(f"\n>>> {key}: {describe_run(profile, formats)}")
+        if not planned[key]:
+            print(f"[Orchestrator] {key}: no go-live times fall in this run; nothing to make.")
+            continue
         try:
-            profile["publish_plan"] = publish_plan(profile)
-            profile["long_publish_plan"] = long_publish_plan(profile)
-            results[key] = orchestrator.execute_pipeline(key, dry_run=dry_runs[key], formats=formats)
+            results[key] = orchestrator.execute_pipeline(key, dry_run=dry_runs[key], formats=formats,
+                                                         planned=planned[key])
             if not dry_runs[key] and results[key] == 0:
                 failed.append(key)
         except Exception as e:
             print(f"\n[Error] {key} failed: {e}")
             failed.append(key)
+            if not dry_runs[key]:
+                from agents.agent_7_notifier import send_telegram
+                send_telegram(f"❌ <b>{html.escape(profile['channel_name'])}</b>: the run stopped with an error "
+                              f"before uploading.\n<code>{html.escape(str(e)[:300])}</code>")
 
     heading("RESULT")
     for key in keys:
@@ -289,7 +479,7 @@ def run_channels(config, instructions, keys, overrides=None, force_dry_run=False
         elif dry_runs[key]:
             print(f" {key}: test run, videos made but not uploaded")
         else:
-            print(f" {key}: {results.get(key, 0)} video(s) uploaded")
+            print(f" {key}: {results.get(key, 0)} of {planned[key]} video(s) uploaded")
     if failed or len(ready) < len(keys):
         print("\nSome channels uploaded nothing. Scroll up for the [Agent ...] lines explaining why.")
         return 1
@@ -356,22 +546,27 @@ def list_channels(config):
         if p["has_answers"]:
             print(f"    Shorts: {describe_plan(p)} ({days}, {p['schedule']['timezone']})")
             print(f"    Long:   {describe_long(p)}")
+            if len(p["schedule"]["post_times"]) > 1:
+                for line in describe_runs(p):
+                    print(f"    Run {line}")
             print(f"    genre: {p['niche']} | {p['language']} | voice: {p['voice']} {p['voice_rate']}")
 
 
 def usage_report(config):
     """Estimate the YouTube API calls the answers use per day, against YouTube's daily limits."""
-    uploads = searches = github_minutes = 0
+    # Channels due at the same time share one GitHub run, so setup time is counted once per scheduled time.
+    # videos_per_day and long_videos_per_day are day totals, shared between a channel's runs
+    uploads = searches = 0
+    github_minutes = len(cron_lines(config)) * GITHUB_SETUP_MINUTES
     for p in config["profiles"].values():
         if not p["enabled"]:
             continue
         runs_per_day = len(p["schedule"]["post_times"]) or 1
         long_count = p["long"]["count"]
-        github_minutes += runs_per_day * (GITHUB_SETUP_MINUTES + p["max_videos_per_run"] * MINUTES_PER_SHORT
-                                          + long_count * MINUTES_PER_LONG)
+        github_minutes += p["max_videos_per_run"] * MINUTES_PER_SHORT + long_count * MINUTES_PER_LONG
         if p["test_run"]:
             continue
-        uploads += (p["max_videos_per_run"] + long_count) * runs_per_day
+        uploads += p["max_videos_per_run"] + long_count
         searches += len(p["search_queries"]) * runs_per_day * (2 if long_count else 1)
     print(f"\nDaily YouTube usage (all channels): {uploads} of {DAILY_UPLOAD_LIMIT} uploads, "
           f"up to {searches} of {DAILY_SEARCH_LIMIT} searches.")
@@ -379,6 +574,9 @@ def usage_report(config):
         print("WARNING: over YouTube's daily limit. Lower videos_per_day or search_phrases, "
               "or request more quota in Google Cloud Console.")
     monthly = github_minutes * 30
+    if config.get("github_repo_public"):
+        print(f"Estimated GitHub Actions time: about {github_minutes} min a day (public repository: unlimited).")
+        return
     print(f"Estimated GitHub Actions time: about {github_minutes} min a day, {monthly} min a month "
           f"(private repos get {GITHUB_FREE_MINUTES} free minutes a month; public repos are unlimited).")
     if monthly > GITHUB_FREE_MINUTES:
@@ -400,9 +598,20 @@ def plan_warnings(config):
                 warnings.append(f"{key}: first_post_time is only {int(gap)} min after fetch_time; allow 30+ min "
                                 "to prepare videos (later slots are used automatically if it runs late).")
         span = p["posting"]["frequency_minutes"] * (p["max_videos_per_run"] - 1)
-        if first and span >= 1440:
+        if first and not p["posting"].get("post_times") and span >= 1440:
             warnings.append(f"{key}: {p['max_videos_per_run']} videos every {p['posting']['frequency_minutes']} min "
                             "runs past 24 hours and overlaps the next day's videos.")
+        # Each run needs time to prepare its videos before the first one goes live
+        tz = ZoneInfo(p["schedule"]["timezone"])
+        for run_time in sorted(parse_time(t) for t in fetch):
+            preview = copy.deepcopy(p)
+            at_fetch = datetime.combine(datetime.now(tz).date(), run_time, tzinfo=tz)
+            plan_run(preview, fetch=run_time, now=at_fetch)
+            times = [datetime.fromisoformat(t) for plan in (preview.get("publish_plan"), preview.get("long_publish_plan"))
+                     for t in (plan or {}).get("times_utc", [])]
+            if times and (min(times) - at_fetch).total_seconds() < 45 * 60:
+                warnings.append(f"{key}: the {run_time:%H:%M} run's first video goes live under 45 min after the run "
+                                "starts; it will go live a little later than planned.")
     return warnings
 
 
@@ -557,7 +766,7 @@ def main():
         if not keys:
             print("No channels are due for this schedule.")
             return 0
-        return run_channels(config, instructions, keys, force_dry_run=args.dry_run)
+        return run_channels(config, instructions, keys, force_dry_run=args.dry_run, cron=args.cron)
 
     if args.check:
         check(config)

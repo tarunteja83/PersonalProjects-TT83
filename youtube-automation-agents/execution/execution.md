@@ -68,26 +68,32 @@ flowchart TD
 | Agent | Does | Uses |
 |---|---|---|
 | **1. Scout** ([agent_1_scout.py](../agents/agent_1_scout.py)) | Finds trending YouTube videos on your `search_phrases` (Shorts for Shorts, 4 to 20 minute videos for long ones), in your `language`, rotating phrases and avoiding recent or excluded source channels. Only the topic is used, never the video itself. | YouTube Data API |
-| **3. Script & Voice** ([agent_3_voiceover.py](../agents/agent_3_voiceover.py)) | Gemini writes an original script: hook first; long videos get 3 to 5 parts, a recap and a comment question. Narrated with your `voice` and `voice_speed`, recording when each sentence is spoken. If the narration is longer than allowed, it's shortened and narrated again. Then it's split into scenes: 3 per Short, ~15 seconds each in long videos. | Gemini, edge-tts |
+| **3. Script & Voice** ([agent_3_voiceover.py](../agents/agent_3_voiceover.py)) | Gemini writes an original script, and in the same request the upload title, description, hashtags and 5 footage terms for the whole topic (one request instead of three). Hook first; long videos get 3 to 5 parts, a recap and a comment question. Narrated with your `voice` and `voice_speed`, recording when each sentence is spoken. If the narration is longer than allowed, it's shortened and narrated again. Then it's split into scenes: 3 per Short, ~15 seconds each in long videos. | Gemini, edge-tts |
 | **2. Footage** ([agent_2_downloader.py](../agents/agent_2_downloader.py)) | Gemini reads each scene and picks a specific search term (news channels may name public figures) plus a generic backup. One clip per scene comes from Pixabay, cartoon or real per `footage_style`. The log prints a **sync report**: each scene's time range, the footage shown and the words spoken. | Gemini, Pixabay |
 | **4. Editor** ([agent_4_editor.py](../agents/agent_4_editor.py)) | FFmpeg cuts every clip to its scene's narration time and fits it to 1080×1920 (Short) or 1920×1080 (long). It joins them, overlays the watermark, adds only the narration, and appends the LIKE → SUBSCRIBE end card. | FFmpeg |
-| **5. Publisher** ([agent_5_publisher.py](../agents/agent_5_publisher.py)) | Confirms the YouTube login is the channel in `channels.yaml`. Gemini writes the title, description and hashtags, with the stock-footage credit. Uploads in 8 MB resumable chunks, scheduled to go live at its slot. | YouTube Data API, Gemini |
+| **5. Publisher** ([agent_5_publisher.py](../agents/agent_5_publisher.py)) | Confirms the YouTube login is the channel in `channels.yaml`. Uses the title, description and hashtags written with the script, plus the stock-footage credit. If they're missing it asks Gemini, and if Gemini is unavailable (quota used up) it uses the source video's title so the finished video still goes out. Uploads in 8 MB resumable chunks, scheduled to go live at its slot. | YouTube Data API |
 
 3. **6. Cleanup** ([agent_6_cleanup.py](../agents/agent_6_cleanup.py)): on GitHub, deletes clips, narration and published videos. On a laptop, deletes `YouTube_Auto` day folders older than `keep_days`.
-4. **7. Telegram** ([agent_7_notifier.py](../agents/agent_7_notifier.py)): posts the links to everything uploaded in this run.
+4. **7. Telegram** ([agent_7_notifier.py](../agents/agent_7_notifier.py)): when a run starts, one message says it's preparing videos (and how late GitHub started it). After each channel finishes, one message per channel lists every uploaded video with its title, link and go-live time, and says if any were not uploaded.
 5. **RESULT:** the log ends with how many videos each channel uploaded. If a channel uploaded nothing, the job is marked failed so you notice.
+
+**Gemini usage:** about 2 requests per video (script with title, then per-scene footage terms). Requests are spaced 4 seconds apart. If every model is rate-limited, the run waits one minute and tries again; if they're still limited, the daily quota is used up, so the rest of the run skips Gemini (footage falls back to the topic terms, titles to the source video's title).
 
 ### A typical day
 
-| Time (IST) | What happens |
-|---|---|
-| 06:00 | Frontline run starts: 2 long videos are made and scheduled for 14:00 and 20:00, then 6 Shorts for 07:00 to 12:00 |
-| 07:00 to 12:00 | YouTube publishes one Frontline Short every hour |
-| 08:00 | WonderSprout run starts: 2 long videos for 17:00 and 19:00, then 8 Shorts for 09:00 to 16:00 |
-| 09:00 to 16:00 | YouTube publishes one WonderSprout Short every hour |
-| 14:00, 17:00, 19:00, 20:00 | The long videos go live |
+Both channels run together three times a day. Morning and afternoon runs make 1 long video and 2 Shorts per channel; the evening run makes 2 Shorts per channel. Each run sends a Telegram "run started" message, then one message per channel when its videos are uploaded.
+
+| Run (IST) | Frontline Ledger | WonderSprout |
+|---|---|---|
+| 06:00 morning | long 12:00, Shorts 08:00 and 10:00 | long 11:30, Shorts 08:30 and 10:30 |
+| 13:00 afternoon | long 16:30, Shorts 14:00 and 16:00 | long 15:30, Shorts 14:30 and 16:00 |
+| 17:00 evening | Shorts 18:00 and 19:00 | Shorts 18:00 and 19:00 |
 
 YouTube publishes each video at its time even though the GitHub job finished hours earlier.
+
+**Start times:** GitHub starts scheduled runs late (4 to 5 hours in October 2026), so `github_schedule_lead_minutes` in `BRAIN.md` (265) makes the GitHub schedule fire that much earlier: 01:35, 08:35 and 12:35 IST, so runs start near 06:00, 13:00 and 17:00. If GitHub is ever on time, the run simply starts early; the videos still go live at their times. The start message shows how early or late each run was; if it drifts, change the lead and run `--check`. A go-live time that has already passed by upload time goes live 10 minutes after upload instead, 30 minutes apart.
+
+**Hashtags:** each video gets up to 8 hashtags in its description (YouTube shows the first three above the title): `#shorts` for Shorts, 5 from Gemini (2 broad, popular ones for the niche and 3 specific to the story), and the hashtags the trending source video uses, minus the source channel's own brand tag. The same words, plus the footage topic terms, go into the video's search tags. The Telegram message lists them.
 
 ---
 
@@ -103,6 +109,8 @@ For each channel, every day it is scheduled (`days`):
 3. **YouTube publishes each video exactly at its time**, even though GitHub has already finished.
 
 Example: `fetch_time "06:00"`, `first_post_time "07:00"`, `post_frequency "1 hour"`, `videos_per_day 12` → videos go live at 07:00, 08:00, 09:00 … 18:00.
+
+**Several runs a day:** give `fetch_time` a list, e.g. `["06:00", "13:00"]`. `videos_per_day` and `long_videos_per_day` stay day totals; each run makes the videos whose go-live time falls between its fetch time and the next one. `--check` prints each run's share, e.g. `Run 06:00 -> 1 long (12:00) + 2 Shorts (08:00, 11:00)`. A one-off run with `--videos`, `--first-post`, `--frequency` or `--post-now` ignores the split and uses the numbers you typed.
 
 | `post_frequency` | 12 videos starting 07:00 go live |
 |---|---|
@@ -122,7 +130,7 @@ Example: `fetch_time "06:00"`, `first_post_time "07:00"`, `post_frequency "1 hou
 | Footage | 3 scenes, one matching clip each | One matching clip per ~15-second scene (about 20 to 28) |
 | Goes live | `first_post_time`, then every `post_frequency` | At each `long_post_times` entry |
 
-A long video takes roughly 5 minutes to build on GitHub (videos are assembled with FFmpeg for speed). `--check` estimates the monthly GitHub time for all your answers.
+A long video takes roughly 12 minutes to build on GitHub (videos are assembled with FFmpeg for speed). `--check` estimates the monthly GitHub time for all your answers.
 
 **Every video looks and sounds the same way:**
 - **Audio:** only the AI narration; the source video's own sound is removed.
@@ -131,7 +139,7 @@ A long video takes roughly 5 minutes to build on GitHub (videos are assembled wi
   - Change the card's length or wording, or turn it off, under `end_card` in `BRAIN.md`.
   - To also show a logo, set `show_logo: true` there. The logo is the channel's YouTube profile picture, saved in `GDrive_Mount/YouTube_Automation/00_branding/`, or the image set as `logo_file` in `channels.yaml`.
 
-If preparing the videos takes longer than planned, the next free slot is used automatically. Allow at least 30 minutes between `fetch_time` and `first_post_time` (about 2 to 3 minutes per video).
+If preparing the videos takes longer than planned, a passed go-live time is replaced by one shortly after upload. Allow at least 30 minutes between `fetch_time` and `first_post_time` (about 3 minutes per Short, 12 per long video).
 
 ---
 
@@ -150,10 +158,11 @@ If preparing the videos takes longer than planned, the next free slot is used au
 | Q9 | Length of each video | `video_length_seconds` | `15` \| `30` \| `45` \| `60` |
 | Q10 | Words the script must never use | `avoid_words` | `[]` or `["word1", "word2"]` |
 | Q11 | Use trending videos from the last N days | `lookback_days` | `1` to `30` |
-| Q12 | When to fetch and prepare videos | `fetch_time` | `"HH:MM"` (24-hour) |
-| Q13 | When the first video goes live | `first_post_time` | `"HH:MM"` |
-| Q14 | Gap between videos | `post_frequency` | `"15 mins"` \| `"30 mins"` \| `"1 hour"` \| `"3 hours"` |
-| Q15 | Videos to post each day | `videos_per_day` | `1` to `50` |
+| Q12 | When to fetch and prepare videos | `fetch_time` | `"HH:MM"` (24-hour), or a list like `["06:00", "13:00"]` for several runs a day |
+| Q13 | When each Short goes live | `short_post_times` | A list like `["08:00", "10:00"]`, one per Short. Or leave it out and use Q13 to Q15 below |
+| Q13 | When the first Short goes live | `first_post_time` | `"HH:MM"` |
+| Q14 | Gap between Shorts | `post_frequency` | `"15 mins"` \| `"30 mins"` \| `"1 hour"` \| `"3 hours"` |
+| Q15 | Shorts to post each day (all runs together) | `videos_per_day` | `1` to `50` |
 | Q16 | Which days | `days` | `"daily"` \| `"weekdays"` \| `"weekends"` \| `[mon, wed, fri]` |
 | Q17 | Timezone for all times | `timezone` | `"Asia/Kolkata"`, `"America/New_York"`, `"Europe/London"`, … |
 | Q18 | Who can see the videos | `visibility` | `"public"` \| `"unlisted"` \| `"private"` |
@@ -323,10 +332,11 @@ The manifest, YouTube logins and logos always stay in `GDrive_Mount/YouTube_Auto
 
 ## Good to Know
 
-- **GitHub may start a run 5 to 30 minutes after `fetch_time`.** Go-live times are still exact, because YouTube publishes them.
+- **GitHub may start a scheduled run hours after its scheduled time** (4 to 5 hours in October 2026). `github_schedule_lead_minutes` in `BRAIN.md` compensates (see "A typical day"). Future go-live times are always exact, because YouTube publishes them.
+- **Public repository:** Actions minutes are unlimited and secrets stay hidden (GitHub never shows them, masks them in logs, and doesn't give them to pull requests from forks). Run logs are public, so they must never print key values; the code masks them.
 - **The workflow file stores times in UTC**, so 06:00 IST appears as `30 0 * * *`. `--check` handles this.
 - **Daylight saving:** India has none. For timezones that do, run `--check` and push after each clock change.
-- **GitHub free minutes:** private repos get 2,000 a month. A Short takes about 2 minutes to build and a long video about 5. Run `--check` to see the estimate for your answers. If it's near or over 2,000, lower the counts or make the repository public; public repos have unlimited free minutes, and your keys stay safe in GitHub secrets either way.
+- **GitHub free minutes:** private repos get 2,000 a month. A Short takes about 3 minutes to build and a long video about 12. Run `--check` to see the estimate for your answers. If it's near or over 2,000, lower the counts or make the repository public; public repos have unlimited free minutes, and your keys stay safe in GitHub secrets either way.
 - **Test-run videos are kept** at "edited" and are uploaded by that channel's next real run.
 
 ## Troubleshooting

@@ -1,7 +1,28 @@
 import os
+import html
 import json
 import requests
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+
+def send_telegram(html_text):
+    """Post a message (Telegram HTML) to the channel in TELEGRAM_CHANNEL_ID; never stops the run on failure."""
+    bot_token, channel_id = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHANNEL_ID")
+    if not bot_token or not channel_id:
+        print("[Agent 7: Telegram] Skipping alert: Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHANNEL_ID.")
+        return
+    payload = {"chat_id": channel_id, "text": html_text, "parse_mode": "HTML", "disable_web_page_preview": True}
+    try:
+        resp = requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", json=payload, timeout=15)
+        if resp.status_code == 200:
+            print("[Agent 7: Telegram] Alert posted to Telegram channel!")
+        else:
+            print(f"[Agent 7: Telegram] API Error: {resp.text}")
+    except Exception as e:
+        # The exception text can contain the request URL, which includes the bot token
+        print(f"[Agent 7: Telegram] Failed to send Telegram alert: {str(e).replace(bot_token, '***')}")
+
 
 class TelegramNotifierAgent:
     def __init__(self, config):
@@ -9,78 +30,43 @@ class TelegramNotifierAgent:
         self.active_key = config["active_profile"]
         self.profile = config["profiles"][self.active_key]
         self.paths = config["storage_paths"]
-        self.bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-        self.channel_id = os.getenv("TELEGRAM_CHANNEL_ID")
 
-    def send_message(self, html_text):
-        if not self.bot_token or not self.channel_id:
-            print("[Agent 7: Telegram] Skipping alert: Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHANNEL_ID.")
+    def go_live_text(self, item):
+        if not item.get("publish_at"):
+            return "live now"
+        tz = ZoneInfo(self.profile["schedule"]["timezone"])
+        when = datetime.fromisoformat(item["publish_at"].replace("Z", "+00:00")).astimezone(tz)
+        day = "today" if when.date() == datetime.now(tz).date() else f"{when:%d %b}"
+        return f"goes live {day} {when:%H:%M} {when:%Z}"
+
+    def run(self, uploaded, planned=None):
+        """One message for this channel: the videos this run uploaded and when each one goes live."""
+        uploaded = sorted(uploaded, key=lambda i: i.get("publish_at") or "")
+        planned = planned if planned is not None else len(uploaded)
+        icon = "✅" if uploaded and len(uploaded) >= planned else "⚠️"
+        lines = [f"{icon} <b>{html.escape(self.profile['channel_name'])}</b>: "
+                 f"{len(uploaded)} of {planned} video(s) uploaded and scheduled"]
+        for idx, item in enumerate(uploaded, 1):
+            long = item.get("format") == "long"
+            yt_id = item.get("uploaded_youtube_id")
+            url = f"https://youtube.com/{'watch?v=' if long else 'shorts/'}{yt_id}"
+            title = item.get("uploaded_title") or item.get("original_title") or yt_id
+            tags = " ".join(item.get("upload_hashtags") or [])
+            lines.append(f"\n{idx}. {'🎬 Long video' if long else '📱 Short'}, {self.go_live_text(item)}\n"
+                         f"<b>{html.escape(title)}</b>\n🔗 {url}" + (f"\n🏷 {html.escape(tags)}" if tags else ""))
+        if len(uploaded) < planned:
+            lines.append(f"\n{planned - len(uploaded)} video(s) were not uploaded. Check the GitHub run log, "
+                         "step 8, for the [Agent ...] lines explaining why.")
+        send_telegram("\n".join(lines))
+
+        if not uploaded:
             return
-
-        url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
-        payload = {
-            "chat_id": self.channel_id,
-            "text": html_text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": False
-        }
-        try:
-            resp = requests.post(url, json=payload, timeout=15)
-            if resp.status_code == 200:
-                print("[Agent 7: Telegram] Alert posted to Telegram channel!")
-            else:
-                print(f"[Agent 7: Telegram] API Error: {resp.text}")
-        except Exception as e:
-            print(f"[Agent 7: Telegram] Failed to send Telegram alert: {e}")
-
-    def run(self):
         manifest_path = self.paths["manifest_file"]
-        if not os.path.exists(manifest_path):
-            return
-
         with open(manifest_path, "r", encoding="utf-8") as f:
             trends = json.load(f)
-
-        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-        published_today = [
-            item for item in trends
-            if item.get("profile") == self.active_key
-            and item.get("status") == "published"
-            and item.get("discovered_at", "")[:10] == today_str
-            and not item.get("notified_telegram", False)
-        ]
-
-        if not published_today:
-            msg = (
-                f"ℹ️ <b>Pipeline Run Completed: {self.profile['channel_name']}</b>\n"
-                f"• <b>Profile:</b> <code>{self.active_key}</code>\n"
-                f"• <b>Status:</b> No new videos published in this cycle.\n"
-                f"• <b>Storage Cleanup:</b> Old raw files purged ✅"
-            )
-            self.send_message(msg)
-            return
-
-        lines = [
-            "🚀 <b>New YouTube Shorts Published!</b>",
-            f"📺 <b>Channel:</b> {self.profile['channel_name']} (<code>{self.active_key}</code>)",
-            f"📅 <b>Date:</b> {today_str}\n"
-        ]
-
-        for idx, item in enumerate(published_today, 1):
-            yt_id = item.get("uploaded_youtube_id")
-            path = "watch?v=" if item.get("format") == "long" else "shorts/"
-            yt_url = f"https://youtube.com/{path}{yt_id}" if yt_id else item.get("source_url")
-            clean_source = item.get("original_creator", "Unknown").replace("@", "")
-            lines.append(
-                f"<b>{idx}. {item.get('original_title')[:55]}...</b>\n"
-                f"🔗 <a href='{yt_url}'>Watch Live Short on YouTube</a>\n"
-                f"✍️ Credit Added: {clean_source}\n"
-            )
-            item["notified_telegram"] = True
-
-        lines.append("🧹 <b>Storage Status:</b> Raw downloads & prior-date caches cleaned automatically.")
-        self.send_message("\n".join(lines))
-
+        ids = {item["video_id"] for item in uploaded}
+        for item in trends:
+            if item.get("video_id") in ids and item.get("profile") == self.active_key:
+                item["notified_telegram"] = True
         with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(trends, f, indent=4, ensure_ascii=False)
