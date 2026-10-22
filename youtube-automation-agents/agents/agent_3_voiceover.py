@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import asyncio
 import edge_tts
@@ -49,19 +50,29 @@ META_FIELDS = {"TITLE": "seo_title", "DESCRIPTION": "seo_description", "HASHTAGS
 
 
 def parse_script_reply(text):
-    """Split Gemini's reply into (narration, {seo_title, seo_description, seo_hashtags, topic_terms}).
+    """Split the AI's reply into (narration, {seo_title, seo_description, seo_hashtags, topic_terms, scene_hints}).
 
-    If the reply ignores the layout, the whole reply is the narration and the publisher writes the title later.
+    A field's value may continue on the following lines (some models list scenes or terms one per line). If the
+    reply ignores the layout, the whole reply is the narration and the publisher writes the title later.
     """
     head, marker, body = text.partition("SCRIPT:")
     if not marker:
         return text.strip(), {}
-    meta = {}
+    parts, field = {}, None
     for line in head.splitlines():
-        label, _, value = line.strip().lstrip("*# ").partition(":")
-        field = META_FIELDS.get(label.strip("* ").upper())
-        if field and value.strip():
-            meta[field] = value.strip().strip("*").strip().strip('"')
+        label, colon, value = line.strip().lstrip("*# ").partition(":")
+        if colon and label.strip("* ").upper() in META_FIELDS:
+            field = META_FIELDS[label.strip("* ").upper()]
+            parts[field] = [value]
+        elif field and line.strip():
+            # A continuation line: drop list numbering or bullets such as "1." or "-"
+            parts[field].append(re.sub(r"^\s*(?:\d+[.)]|[-*•])\s*", "", line))
+    joiners = {"scene_hints": " ; ", "topic_terms": ", "}
+    meta = {}
+    for field, values in parts.items():
+        value = joiners.get(field, " ").join(v.strip().strip("*").strip().strip('"') for v in values if v.strip())
+        if value:
+            meta[field] = value
     if "topic_terms" in meta:
         meta["topic_terms"] = [t.strip().strip('"') for t in meta["topic_terms"].split(",") if t.strip()]
     if "scene_hints" in meta:

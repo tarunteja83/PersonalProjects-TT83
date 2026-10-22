@@ -1,14 +1,68 @@
 import os
+import re
 import html
 import json
 import random
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from googleapiclient.discovery import build
+
+from agents.agent_8_analyst import order_phrases
 
 # YouTube's relevanceLanguage codes, so results favour videos in the channel's narration language
 LANGUAGE_CODES = {"English": "en", "Hindi": "hi", "Telugu": "te"}
 # Don't reuse a source channel that supplied any of this channel's last N videos (unless nothing else is left)
 RECENT_SOURCES_WINDOW = 5
+# Letters of each narration language's own script; a source title written in another script is another audience
+SCRIPTS = {"Hindi": (0x0900, 0x097F), "Telugu": (0x0C00, 0x0C7F)}
+# Everyday Hindi words that rarely appear in English titles; two or more mark a Hinglish video
+HINGLISH_WORDS = {"hai", "hain", "ke", "ki", "ka", "ko", "se", "mein", "aur", "kya", "nahi", "wala", "wali", "wale",
+                  "gaya", "gayi", "bhi", "kahani", "kahaniyan", "bachpan", "bachpana", "dost", "pani", "jadu", "jaadu",
+                  "bacche", "bachon", "masti", "apna", "apni", "hum", "tum", "kaise", "kyun", "ghar", "gaon"}
+
+# A title naming its language ("Tamil Kids Story") is for that language's audience
+OTHER_LANGUAGES = {"hindi", "telugu", "tamil", "bengali", "bangla", "urdu", "malayalam", "kannada", "marathi",
+                   "gujarati", "punjabi", "odia", "arabic", "indonesian", "spanish", "portuguese"}
+
+
+def is_latin(char):
+    """Latin letters, including accented ones and the 'bold' or 'italic' maths letters used in fancy titles."""
+    return ord(char) < 0x250 or unicodedata.name(char, "").startswith("MATHEMATICAL")
+
+
+def views_per_hour(video, now=None):
+    """How fast a video is gaining views: views since upload divided by hours since upload (at least 1)."""
+    published = datetime.fromisoformat(video["snippet"]["publishedAt"].replace("Z", "+00:00"))
+    hours = max(((now or datetime.now(timezone.utc)) - published).total_seconds() / 3600, 1)
+    return int(video.get("statistics", {}).get("viewCount", 0)) / hours
+
+
+def language_matches(video, language):
+    """True or False if the source video is or isn't in the channel's language, None if it can't be told.
+
+    Uses the language the uploader set, then the writing script of the title: an English channel shouldn't take
+    topics from a Hindi video (a different audience, and its title is no use as a fallback title).
+    """
+    code = LANGUAGE_CODES.get(language)
+    snippet = video["snippet"]
+    declared = (snippet.get("defaultAudioLanguage") or snippet.get("defaultLanguage") or "").lower()
+    if code and declared and not declared.startswith("zxx") and declared.split("-")[0] != code:
+        return False
+    # Uploaders often leave the language as English, so the title is checked too
+    title = snippet.get("title", "")
+    letters = [c for c in title if c.isalpha()]
+    if not letters:
+        return None
+    if language in SCRIPTS:
+        low, high = SCRIPTS[language]
+        return any(low <= ord(c) <= high for c in letters) or None
+    # English: no words in another script (Devanagari, Telugu, Bengali...), and not Hindi written in English
+    # letters ("Hinglish"), spotted by its common words in the title and the start of the description
+    if sum(not is_latin(c) for c in letters) >= 3:
+        return False
+    words = set(re.findall(r"[a-z]+", f"{title} {snippet.get('description', '')[:300]}".lower()))
+    title_words = set(re.findall(r"[a-z]+", title.lower()))
+    return len(words & HINGLISH_WORDS) < 2 and not title_words & OTHER_LANGUAGES
 
 class TrendScoutAgent:
     def __init__(self, config, instructions):
@@ -41,8 +95,27 @@ class TrendScoutAgent:
             language = LANGUAGE_CODES.get(self.profile.get("language", "English"))
             if language:
                 params["relevanceLanguage"] = language
-            self.search_cache[query] = self.youtube.search().list(**params).execute().get("items", [])
+            found = self.youtube.search().list(**params).execute().get("items", [])
+            self.search_cache[query] = self.rank(found)
         return self.search_cache[query]
+
+    def rank(self, items):
+        """Rising videos first (views per hour), in the channel's language first; costs 1 quota unit per 50 videos."""
+        details = {}
+        ids = [i["id"]["videoId"] for i in items]
+        for start in range(0, len(ids), 50):
+            response = self.youtube.videos().list(part="snippet,statistics", id=",".join(ids[start:start + 50])).execute()
+            details.update({v["id"]: v for v in response.get("items", [])})
+        language = self.profile.get("language", "English")
+        ranked = []
+        for item in items:
+            video = details.get(item["id"]["videoId"])
+            if not video:
+                continue
+            item["views_per_hour"] = round(views_per_hour(video), 1)
+            item["language_ok"] = language_matches(video, language) is not False
+            ranked.append(item)
+        return sorted(ranked, key=lambda i: (not i["language_ok"], -i["views_per_hour"]))
 
     def run(self, limit=None):
         """Add up to `limit` new videos (default: the channel's videos per day) to the manifest.
@@ -67,14 +140,14 @@ class TrendScoutAgent:
         excluded = {name.lower() for name in self.profile.get("exclude_sources") or []}
         max_per_run = limit or self.profile["max_videos_per_run"]
 
-        queries = self.profile["search_queries"]
-        # Start from a different phrase each run so single-video runs cover every topic over time
-        offset = len(mine) % len(queries)
-        queries = queries[offset:] + queries[:offset]
+        # Phrases whose videos got the most views come first; untried or long-unused phrases are tried again
+        queries = order_phrases(self.profile["search_queries"],
+                                [i for i in mine if i.get("format", "short") == self.profile.get("format", "short")])
         candidates = {query: self.search(query, published_after) for query in queries}
 
         new_items, used_sources = [], set()
-        for allow_recent in (False, True):
+        # Rising, same-language sources first; a recently used source or another language only if nothing else
+        for allow_recent, allow_language in ((False, False), (True, False), (True, True)):
             # Round-robin: best unused video from phrase 1, then phrase 2, ... until enough are picked
             progress = True
             while len(new_items) < max_per_run and progress:
@@ -83,7 +156,7 @@ class TrendScoutAgent:
                     if len(new_items) >= max_per_run:
                         break
                     pick = self.next_candidate(candidates[query], existing_ids, used_sources, excluded,
-                                               set() if allow_recent else recent_sources)
+                                               set() if allow_recent else recent_sources, allow_language)
                     if pick:
                         new_items.append(self.entry(pick, query))
                         existing_ids.add(pick["id"]["videoId"])
@@ -100,11 +173,12 @@ class TrendScoutAgent:
         print(f"[Agent 1: Scout] Added {len(new_items)} new trending videos. Sources: {sources}")
 
     @staticmethod
-    def next_candidate(items, existing_ids, used_sources, excluded, recent_sources):
+    def next_candidate(items, existing_ids, used_sources, excluded, recent_sources, allow_language=True):
         for item in items:
             source = item["snippet"]["channelTitle"].lower()
             if (item["id"]["videoId"] in existing_ids or source in used_sources
-                    or source in excluded or source in recent_sources):
+                    or source in excluded or source in recent_sources
+                    or not (allow_language or item.get("language_ok", True))):
                 continue
             return item
         return None
@@ -129,6 +203,7 @@ class TrendScoutAgent:
             "target_seconds": target_seconds,
             "max_seconds": max_seconds,
             "genre": query,
+            "source_views_per_hour": item.get("views_per_hour"),
             # The search API returns HTML-escaped text (e.g. &#39; and &amp;)
             "original_title": html.unescape(item["snippet"]["title"]),
             "original_description": html.unescape(item["snippet"]["description"]),

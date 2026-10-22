@@ -51,6 +51,11 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
   MoviePy remains only for `footage.source: "youtube"`.
 - **Upload safety:** `channels.yaml` `channel_url` is checked against the logged-in channel before saving a login and
   before every upload.
+- **Backup AI (Groq):** `agents/ai.py` sends a request to Groq (`ai_fallbacks` in BRAIN.md: gpt-oss-120b, then
+  qwen3.8-27b; free, ~1,000 requests/day/model, 8K tokens/min) as soon as every Gemini model fails, before the
+  65 s wait. Verified 2026-10-22: with Gemini out of quota, Groq wrote a full Short (script, title, scenes).
+  GROQ_API_KEY is in .env and was added as a GitHub secret by the owner (the token can't list secrets; the run log
+  line "Backup AI ... groq (key set)" confirms it).
 - **Gemini quota:** runs on 20 and 21 Oct 2026 failed (0 uploaded) when every model returned 429 mid-run. Now the
   script request also returns title, description, hashtags and footage terms (Shorts also get their per-scene
   terms there: 1 request per Short, 2 per long video, ~20 a day). The key is on the free tier: 20 requests a day per
@@ -60,6 +65,13 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
   (see above). Passed go-live slots go live soon after upload; the Telegram start message shows how early or late.
 - **Telegram:** each run sends a start message, then one message per channel (videos, links, go-live times, hashtags).
 - **Hashtags:** Gemini's topic hashtags plus the trending source video's own, up to 8, also used as search tags.
+- **Views (from `execution/view_techniques.md`, source S1 "Why Your Views STOP After 48 Hours"):** ACTIVE RULES
+  (trend first, stay in niche, retention, honest click-worthy titles) are appended to the Gemini instructions by
+  `brain.view_rules()`. The Scout ranks sources by views per hour and skips other-language sources (other scripts,
+  Hinglish words, titles naming another language; WonderSprout had been taking Hindi topics). Agent 8 (Analyst,
+  `agents/agent_8_analyst.py`) stores views on manifest items (`stats`, `views_48h`), orders each channel's search
+  phrases by views after 48 h (re-trying phrases unused for 3 days), and posts a daily Telegram report
+  (state in `01_manifests/analyst_state.json`).
 - **Gemini:** `gemini-2.5-flash` is retired for this key. `ai_models` in BRAIN.md falls back across 3.8 → 3.7 → 3.5
   → flash-latest, and retries dropped connections.
 
@@ -73,7 +85,7 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
   (kept for future use) and GITHUB_TOKEN (fine-grained, this repo only, Actions read and write: used to read run logs
   and start the workflow through the API). **Never overwrite it or `.env.example` without reading it first;** the owner once put real
   keys in `.env.example`. Never print key values; mask them.
-- **GitHub secrets:** YOUTUBE_API_KEY, GEMINI_API_KEY, PIXABAY_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID,
+- **GitHub secrets:** YOUTUBE_API_KEY, GEMINI_API_KEY, GROQ_API_KEY, PIXABAY_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID,
   CLIENT_SECRET_JSON, RCLONE_CONFIG_GDRIVE (rclone uses the owner's own OAuth client; the env var must not be named
   `RCLONE_CONFIG`).
 - **Google Cloud project** `thepersonelyoutubeproject-tt83`: OAuth app published (so tokens don't expire after 7 days),
@@ -96,6 +108,17 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
 - **Verify before committing:** use offline tests with stubs where possible, then a real local test run with
   `--videos 1 --post-now --visibility unlisted`. Daily runs post **public** videos.
 - **Write for the owner in plain terms:** explain where to click, and give options with a recommendation.
+- **When the owner sends a YouTube link about getting views:** analyse it and record it in
+  `youtube-automation-agents/execution/view_techniques.md`, following entry S1 as the model.
+  1. Run `python execution/execution.py --learn <link>` (laptop; it uses 1 Gemini request and adds a "proposed"
+     entry). If Gemini or subtitles fail, read the metadata with the YouTube API and the subtitles with yt-dlp
+     (`--skip-download --write-auto-subs --sub-langs "en.*"`) and write the entry yourself.
+  2. Review every proposal critically: keep only techniques the video gives evidence for, reject anything that fakes
+     engagement, misleads viewers or reuses others' content, and check it against what the pipeline already does.
+  3. Adopt: short writing rules go into ACTIVE RULES (sent to Gemini with every request, so keep them brief and
+     tagged [S<n>]); code-level techniques go into the code and the "HOW THE PIPELINE APPLIES THEM" table; owner
+     tasks go under "Not automated yet". Mark the entry "reviewed" with a → verdict per technique.
+  4. Then the usual checks (--check, setup_project.py, 3.11 syntax, tests) and tell the owner what changed.
 
 ## Status and open items (as of 2026-10-21)
 - **Shipped (commit f0f8d7e on `main`, branch `three-daily-runs-telegram-hashtags`):** three runs a day for both

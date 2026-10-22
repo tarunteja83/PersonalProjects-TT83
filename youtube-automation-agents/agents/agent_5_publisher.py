@@ -111,7 +111,7 @@ class PublisherAgent:
         except Exception as e:
             # Gemini quota ran out or it is down: the video is already rendered, so publish it under the
             # source video's title instead of losing the slot
-            print(f"[Agent 5: Publisher] Gemini could not write the title for {item['video_id']}, "
+            print(f"[Agent 5: Publisher] The AI could not write the title for {item['video_id']}, "
                   f"using the source video's title: {str(e)[:160]}")
             new_title, seo_body = self.fallback_seo_package(item, max_title)
 

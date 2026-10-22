@@ -8,6 +8,7 @@ Answers to every question live in execution/questions.yaml; this file reads them
     python execution/execution.py --list                 # show channels and their posting plans
     python execution/execution.py --authorize kids_edu   # sign in to YouTube for a channel (once)
     python execution/execution.py --ask                  # answer the questions interactively for a one-off run
+    python execution/execution.py --learn <youtube link> # analyse a video about getting views (view_techniques.md)
 
 One-off overrides for a run: --genre "..." --videos 6 --frequency "30 mins" --first-post "09:00" --dry-run
 GitHub uses: --scheduled --cron "<cron>"  and  --due --cron "<cron>"
@@ -427,7 +428,10 @@ def notify_start(config, keys, fetches, formats):
 def run_channels(config, instructions, keys, overrides=None, force_dry_run=False, formats=("long", "short"),
                  cron=None):
     from dotenv import load_dotenv
+    from agents import ai
     load_dotenv(os.path.join(PROJECT_DIR, ".env"))
+    ai.configure(config)
+    print(f"Backup AI when Gemini is out of quota: {ai.backup_status()}")
 
     config = copy.deepcopy(config)
     for key in keys:
@@ -471,6 +475,12 @@ def run_channels(config, instructions, keys, overrides=None, force_dry_run=False
                 from agents.agent_7_notifier import send_telegram
                 send_telegram(f"❌ <b>{html.escape(profile['channel_name'])}</b>: the run stopped with an error "
                               f"before uploading.\n<code>{html.escape(str(e)[:300])}</code>")
+
+    live = [key for key in ready if not dry_runs[key]]
+    if live:
+        # Record how earlier uploads are doing; it decides which search phrases the Scout tries first
+        from agents.agent_8_analyst import AnalystAgent
+        AnalystAgent(config).run(live)
 
     heading("RESULT")
     for key in keys:
@@ -668,6 +678,28 @@ def authorize(config, key):
     return True
 
 
+def learn_from(config, link):
+    from dotenv import load_dotenv
+    from google import genai
+    from agents import ai
+    from agents.learner import learn
+    load_dotenv(os.path.join(PROJECT_DIR, ".env"))
+    ai.configure(config)
+    for name in ("YOUTUBE_API_KEY", "GEMINI_API_KEY"):
+        if not os.getenv(name):
+            print(f"{name} is not set (add it to .env).")
+            return 2
+    try:
+        found = learn(link, genai.Client(api_key=os.getenv("GEMINI_API_KEY")), config.get("ai_models"))
+    except Exception as e:
+        print(f"[Learn] Failed: {e}")
+        return 1
+    if found:
+        print("Review the entry at the end of execution/view_techniques.md: copy good rules into ACTIVE RULES and "
+              "change its status to reviewed.")
+    return 0
+
+
 # ---------- --ask: answer the questions interactively for one run ----------
 
 def ask_mode(config, instructions):
@@ -750,6 +782,9 @@ def main():
     parser.add_argument("--due", action="store_true", help="Only print channels due for --cron (used by GitHub)")
     parser.add_argument("--cron", help="The cron expression that triggered a scheduled GitHub run")
     parser.add_argument("--authorize", metavar="CHANNEL", help="Sign in to YouTube for a channel")
+    parser.add_argument("--learn", metavar="LINK",
+                        help="Analyse a YouTube video about getting views; adds its techniques to "
+                             "execution/view_techniques.md for review")
     parser.add_argument("--check", action="store_true", help="Validate pages, show plan and usage, update schedule")
     parser.add_argument("--list", action="store_true", help="Show channels and their posting plans")
     args = parser.parse_args()
@@ -781,6 +816,8 @@ def main():
         return 0
     if args.authorize:
         return 0 if authorize(config, args.authorize) else 1
+    if args.learn:
+        return learn_from(config, args.learn)
     if args.ask:
         return ask_mode(config, instructions)
 

@@ -5,6 +5,12 @@ Channels are listed on the channel page: `execution/channels.yaml`. How to run e
 ```yaml
 # Gemini models for scripts and titles, tried in order (a busy or retired model falls through to the next)
 ai_models: ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-flash-latest"]
+# Free backups used when every Gemini model is out of quota or busy, tried in order. A provider whose key isn't set
+# (GROQ_API_KEY, OPENROUTER_API_KEY in .env and GitHub secrets) is skipped. Groq's free tier: about 1,000 requests a
+# day per model. Add {provider: "openrouter", models: ["<model>:free"]} for a second backup.
+ai_fallbacks:
+  - provider: "groq"
+    models: ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"]
 
 # GitHub starts scheduled runs late (4 to 5 hours in October 2026). The GitHub schedule fires this many minutes
 # BEFORE each fetch_time, so runs actually start near fetch_time. 0 = no shift. The Telegram start message says how
@@ -71,7 +77,8 @@ cleanup_rules:                  # GitHub runs; laptop runs keep files in YouTube
 |---|---|
 | `execution/channels.yaml` | Who each channel is: name, link, made for kids, watermark, category |
 | `execution/questions.yaml` | What and when each channel posts: genre, searches, language, voice, Shorts schedule, long videos, footage style |
-| `BRAIN.md` (this file) | Rules shared by all channels: AI models, storage, footage source, editing and end card, upload and cleanup, AI writing instructions |
+| `execution/view_techniques.md` | What gets views: its ACTIVE RULES are added to the AI instructions below for every video; it also logs every analysed source video (`--learn`) |
+| `BRAIN.md` (this file) | Rules shared by all channels: AI models and the free backup AI (`ai_fallbacks`, Groq), storage, footage source, editing and end card, upload and cleanup, AI writing instructions |
 | `.github/workflows/daily_youtube_agents.yml` | When GitHub runs (generated from each channel's `fetch_time` by `execution.py --check`, firing `github_schedule_lead_minutes` early because GitHub starts scheduled runs hours late) |
 | `execution/execution.py` | The only entry point; reads the three files above and runs the agents |
 
@@ -79,13 +86,15 @@ cleanup_rules:                  # GitHub runs; laptop runs keep files in YouTube
 1. **Choose channels**: a scheduled run picks the channels whose `fetch_time` (one time or a list) matches; a manual run uses the channel typed in. With several fetch times a day, each run makes only the videos whose go-live times fall before the channel's next run.
 2. **Clear lost work**: unfinished videos whose files are gone (an interrupted earlier run) are marked `expired`.
 3. **Long videos first, then Shorts.** For each format:
-   1. **Agent 1, Scout**: searches YouTube for trending videos on the channel's search phrases (Shorts topics from Shorts, long topics from 4 to 20 minute videos), in the channel's language, rotating phrases and source channels.
-   2. **Agent 3, Script & Voice**: Gemini writes an original script for the topic, and in the same request the upload title, description, hashtags and footage terms (hook first; long videos get 3 to 5 parts and a recap). The voice narrates it, sentence timings are recorded, and if the narration runs longer than allowed the script is shortened and narrated again. The narration is split into scenes (3 per Short, ~15 s each in long videos).
-   3. **Agent 2, Footage**: a specific and a backup search term for each scene (for Shorts, written in the script request; for long videos, Gemini reads each scene's words in a second request); one stock clip per scene is downloaded from Pixabay (or Pexels).
+   1. **Agent 1, Scout**: searches YouTube for trending videos on the channel's search phrases (Shorts topics from Shorts, long topics from 4 to 20 minute videos), ranks them by views per hour, skips other-language sources, uses the best-performing phrases first (from Agent 8) and rotates source channels.
+   2. **Agent 3, Script & Voice**: Gemini (or, when every Gemini model is out of quota or busy, the backup AI: Groq) writes an original script for the topic, and in the same request the upload title, description, hashtags and footage terms (hook first; long videos get 3 to 5 parts and a recap). The voice narrates it, sentence timings are recorded, and if the narration runs longer than allowed the script is shortened and narrated again. The narration is split into scenes (3 per Short, ~15 s each in long videos).
+   3. **Agent 2, Footage**: a specific and a backup search term for each scene (for Shorts, written in the script request; for long videos, the AI reads each scene's words in a second request); one stock clip per scene is downloaded from Pixabay (or Pexels).
    4. **Agent 4, Editor**: FFmpeg cuts each clip to its scene's narration time, fits it to 1080x1920 (Short) or 1920x1080 (long), joins them, adds the watermark and narration (no original audio), and appends the LIKE then SUBSCRIBE end card.
-   5. **Agent 5, Publisher**: confirms the YouTube login is the right channel, uses the title and description written with the script (the source video's title if Gemini was unavailable), adds up to 8 hashtags (`#shorts` for Shorts, Gemini's topic hashtags and the trending source video's own, also used as search tags) and the stock footage credit, and uploads in resumable chunks with its go-live time (Shorts: `short_post_times`, or `first_post_time` then every `post_frequency`; long: `long_post_times`; a time already passed goes live soon after upload). It uploads only as many videos as the run has go-live times; extra finished videos wait for the next run.
+   5. **Agent 5, Publisher**: confirms the YouTube login is the right channel, uses the title and description written with the script (the source video's title if no AI was available), adds up to 8 hashtags (`#shorts` for Shorts, Gemini's topic hashtags and the trending source video's own, also used as search tags) and the stock footage credit, and uploads in resumable chunks with its go-live time (Shorts: `short_post_times`, or `first_post_time` then every `post_frequency`; long: `long_post_times`; a time already passed goes live soon after upload). It uploads only as many videos as the run has go-live times; extra finished videos wait for the next run.
 4. **Agent 6, Cleanup**: deletes files no longer needed (GitHub) or day folders older than `keep_days` (laptop).
 5. **Agent 7, Telegram**: a "run started" message (with how early or late GitHub started it), then one message per channel with each uploaded video's title, link, go-live time and hashtags, and how many failed.
+6. **Agent 8, Analyst** (after all channels): saves each recent upload's views, scores search phrases by views after 48 hours, and sends a daily Telegram report.
+7. **Result**: the log ends with each channel's uploads out of planned. A channel that uploaded nothing marks the GitHub run failed (red); one that uploaded some but not all adds a yellow warning to a green run.
 
 ### Video status flow (in the manifest, `01_manifests/trends.json`)
 `discovered` → `voiced` → `ready_to_edit` → `edited` → `published`

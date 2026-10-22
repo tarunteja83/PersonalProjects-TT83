@@ -11,6 +11,7 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 BRAIN_FILE = os.path.join(PROJECT_DIR, "BRAIN.md")
 CHANNELS_FILE = os.path.join(PROJECT_DIR, "execution", "channels.yaml")
 QUESTIONS_FILE = os.path.join(PROJECT_DIR, "execution", "questions.yaml")
+VIEW_TECHNIQUES_FILE = os.path.join(PROJECT_DIR, "execution", "view_techniques.md")
 
 DAY_NAMES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 DEFAULT_TIMEZONE = "Asia/Kolkata"
@@ -53,12 +54,25 @@ def load_brain(brain_file=BRAIN_FILE, channels_file=CHANNELS_FILE, questions_fil
 
     config = yaml.safe_load(yaml_match.group(1))
     instructions = raw_md.split("## AGENT INSTRUCTIONS")[-1].strip()
+    rules = view_rules()
+    if rules:
+        instructions += "\n\n## VIEW-GROWTH RULES (apply to every script, title and hashtag)\n" + rules
     config["profiles"] = load_profiles(channels_file, questions_file)
     lead = int(config.get("github_schedule_lead_minutes") or 0)
     for profile in config["profiles"].values():
         profile["schedule"]["lead_minutes"] = lead
     apply_media_folders(config)
     return config, instructions
+
+
+def view_rules(path=VIEW_TECHNIQUES_FILE):
+    """The ACTIVE RULES section of execution/view_techniques.md, without the [S1]-style source tags."""
+    if not os.path.exists(path):
+        return ""
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read()
+    section = re.search(r"^## ACTIVE RULES\s*\n(.*?)(?=^## |\Z)", text, re.DOTALL | re.MULTILINE)
+    return re.sub(r"\s*\[S\d+(?:,\s*S\d+)*\]", "", section.group(1)).strip() if section else ""
 
 
 def apply_media_folders(config):

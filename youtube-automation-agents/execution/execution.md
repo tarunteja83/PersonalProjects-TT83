@@ -30,20 +30,22 @@ Everything you need to run the YouTube automation lives in this folder:
 
 ```mermaid
 flowchart TD
-    A[GitHub schedule fires at a channel's fetch_time] --> B[Set up: Python, FFmpeg, rclone, keys]
+    A[GitHub schedule fires github_schedule_lead_minutes before fetch_time] --> B[Set up: Python, FFmpeg, rclone, keys]
     B --> C[Pull YouTube logins and manifest from Google Drive]
     C --> D[execution.py reads channels.yaml + questions.yaml + BRAIN.md]
     D --> E[Mark lost half-finished videos expired]
-    E --> F{Long videos first, then Shorts}
-    F --> G[Scout, agent 1: trending topic on YouTube]
-    G --> H[Script and voice, agent 3: Gemini script, narration, sentence timings, length check, scenes]
+    E --> T[Telegram: run started, agent 7]
+    T --> F{Long videos first, then Shorts}
+    F --> G[Scout, agent 1: rising same-language topic, best search phrases first]
+    G --> H[Script and voice, agent 3: Gemini or backup Groq writes script, title, hashtags, then narration, timings, scenes]
     H --> I[Footage, agent 2: one matching stock clip per scene]
     I --> J[Editor, agent 4: FFmpeg montage, watermark, narration, end card]
     J --> K[Publisher, agent 5: channel check, title, chunked upload with go-live time]
     K --> F
     F -->|both formats done| L[Cleanup, agent 6]
-    L --> M[Telegram alert with links, agent 7]
-    M --> N[Sync manifest and unpublished videos back to Google Drive]
+    L --> M[Telegram: one message per channel, agent 7]
+    M -->|all channels done| P[Analyst, agent 8: record views, score search phrases, daily report]
+    P --> N[Sync manifest and unpublished videos back to Google Drive]
 ```
 
 ### The GitHub job ([daily_youtube_agents.yml](../../.github/workflows/daily_youtube_agents.yml))
@@ -67,7 +69,7 @@ flowchart TD
 
 | Agent | Does | Uses |
 |---|---|---|
-| **1. Scout** ([agent_1_scout.py](../agents/agent_1_scout.py)) | Finds trending YouTube videos on your `search_phrases` (Shorts for Shorts, 4 to 20 minute videos for long ones), in your `language`, rotating phrases and avoiding recent or excluded source channels. Only the topic is used, never the video itself. | YouTube Data API |
+| **1. Scout** ([agent_1_scout.py](../agents/agent_1_scout.py)) | Finds trending YouTube videos on your `search_phrases` (Shorts for Shorts, 4 to 20 minute videos for long ones), in your `language`. It ranks them by **views per hour** (what is rising right now), skips sources in another language (other scripts, Hinglish, or a title naming another language), tries the search phrases whose videos got the most views first, and avoids recent or excluded source channels. Only the topic is used, never the video itself. | YouTube Data API |
 | **3. Script & Voice** ([agent_3_voiceover.py](../agents/agent_3_voiceover.py)) | Gemini writes an original script, and in the same request the upload title, description, hashtags and 5 footage terms for the whole topic (one request instead of three). Hook first; long videos get 3 to 5 parts, a recap and a comment question. Narrated with your `voice` and `voice_speed`, recording when each sentence is spoken. If the narration is longer than allowed, it's shortened and narrated again. Then it's split into scenes: 3 per Short, ~15 seconds each in long videos. | Gemini, edge-tts |
 | **2. Footage** ([agent_2_downloader.py](../agents/agent_2_downloader.py)) | Gemini reads each scene and picks a specific search term (news channels may name public figures) plus a generic backup. One clip per scene comes from Pixabay, cartoon or real per `footage_style`. The log prints a **sync report**: each scene's time range, the footage shown and the words spoken. | Gemini, Pixabay |
 | **4. Editor** ([agent_4_editor.py](../agents/agent_4_editor.py)) | FFmpeg cuts every clip to its scene's narration time and fits it to 1080×1920 (Short) or 1920×1080 (long). It joins them, overlays the watermark, adds only the narration, and appends the LIKE → SUBSCRIBE end card. | FFmpeg |
@@ -75,9 +77,12 @@ flowchart TD
 
 3. **6. Cleanup** ([agent_6_cleanup.py](../agents/agent_6_cleanup.py)): on GitHub, deletes clips, narration and published videos. On a laptop, deletes `YouTube_Auto` day folders older than `keep_days`.
 4. **7. Telegram** ([agent_7_notifier.py](../agents/agent_7_notifier.py)): when a run starts, one message says it's preparing videos (and how late GitHub started it). After each channel finishes, one message per channel lists every uploaded video with its title, link and go-live time, and says if any were not uploaded.
-5. **RESULT:** the log ends with how many videos each channel uploaded. If a channel uploaded nothing, the job is marked failed so you notice.
+5. **8. Analyst** ([agent_8_analyst.py](../agents/agent_8_analyst.py)): reads the views, likes and comments of every video uploaded in the last 14 days and saves them in the manifest. A video's views after 48 hours score the search phrase that found its topic; the Scout uses the best phrases first and re-tries any phrase unused for 3 days. Once a day it posts a Telegram report: videos and views per channel over 7 days, the best video, and the best and weakest topic.
+6. **RESULT:** the log ends with how many videos each channel uploaded. If a channel uploaded nothing, the job is marked failed; if it uploaded some but not all, the run stays green with a yellow warning.
 
 **Gemini usage:** 1 request per Short (script, title, hashtags and each scene's footage terms together) and 2 per long video (script, then per-scene footage terms for its ~20 scenes): about 20 a day for both channels. The free tier allows 20 requests a day **per model**, reset at 12:30 IST, so the 4 models in `ai_models` share the load. Requests are spaced 4 seconds apart. If every model is rate-limited, the run waits one minute and tries again; if they're still limited, the daily quota is used up, so the rest of the run skips Gemini (footage falls back to the topic terms, titles to the source video's title).
+
+**Backup AI:** when every Gemini model is out of quota or busy, the same request goes straight to **Groq** (free, no card, about 1,000 requests a day per model; `openai/gpt-oss-120b`, then `qwen/qwen3.8-27b`), so videos are still made. The log shows `[AI] Gemini unavailable; written by groq ...`, and the start of every run logs whether the Groq key is set. Change or add backups under `ai_fallbacks` in `BRAIN.md`. Gemini still writes Hindi and Telugu best, so it stays first.
 
 ### A typical day
 
@@ -229,6 +234,7 @@ For Hindi and Telugu, scripts, titles and descriptions are written in the native
 | `PIXABAY_API_KEY` | Pixabay API key (free stock footage). To use Pexels instead, add a `PEXELS_API_KEY` secret and pass it in step 6 of the workflow the same way. |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token |
 | `TELEGRAM_CHANNEL_ID` | Telegram channel ID (starts with `-100`) |
+| `GROQ_API_KEY` | Free backup AI (console.groq.com → API Keys). Optional but recommended |
 | `CLIENT_SECRET_JSON` | Full contents of `client_secret.json` |
 | `RCLONE_CONFIG_GDRIVE` | Full contents of the file shown by `rclone config file` |
 
@@ -305,8 +311,18 @@ It runs **every channel with `run: true`** using its answers in `questions.yaml`
 | `python execution/execution.py --check` | Validate both files, show plans and YouTube usage, update the GitHub schedule |
 | `python execution/execution.py --list` | Show channels, plans and YouTube login status |
 | `python execution/execution.py --authorize KEY` | Sign in to YouTube for a channel |
+| `python execution/execution.py --learn LINK` | Analyse a YouTube video about getting views and add its techniques to [view_techniques.md](view_techniques.md) as a proposal to review (laptop only) |
 
 ---
+
+## Getting More Views
+
+[view_techniques.md](view_techniques.md) holds what we've learned about views:
+- **ACTIVE RULES** are sent to Gemini with every script, title and hashtag (trends first, stay in the niche, write for retention, honest click-worthy titles).
+- **HOW THE PIPELINE APPLIES THEM** lists what the code does (rising topics, same-language sources, the Analyst's feedback loop, the fixed schedule) and what the owner does by hand (thumbnails after phone verification, checking view duration and click-through rate in Studio).
+- **SOURCES** records every video analysed and what was adopted or rejected.
+
+To learn from a new video, run `python execution/execution.py --learn <link>` on the laptop (or give the link to Claude). It adds a "proposed" entry; nothing changes until good rules are copied into ACTIVE RULES. Anything that fakes engagement, misleads viewers or re-uploads other people's content is rejected: it breaks YouTube's policies.
 
 ## Where the Footage Comes From
 
@@ -351,7 +367,7 @@ The manifest, YouTube logins and logos always stay in `GDrive_Mount/YouTube_Auto
 | "Cannot start: No .env file" | Copy `.env.example` to `.env` and fill in the keys. |
 | `--check` warns about YouTube usage | Lower `videos_per_day` or the number of `search_phrases`, or request more quota in Google Cloud Console. |
 | `pip` says "filename too long" | Use a short-path venv (One-Time Setup, step 1). |
-| "429 RESOURCE_EXHAUSTED" from Gemini | The Gemini quota is used up (free tier: 20 requests a day per model, reset at 12:30 IST). The run waits one minute and tries again once; if it's still limited, the rest of the run skips Gemini (footage uses topic terms, titles use the source video's title), so finished videos still upload. If it happens every day, use a paid Gemini key or fewer videos. |
+| "429 RESOURCE_EXHAUSTED" from Gemini | The Gemini quota is used up (free tier: 20 requests a day per model, reset at 12:30 IST). Groq takes over automatically if `GROQ_API_KEY` is set (check the run log line "Backup AI when Gemini is out of quota: groq (key set)"). If both are out, finished videos still upload with the source video's title. |
 | "The user has exceeded the number of videos they may upload" | YouTube's daily upload limit for that channel (low for new, unverified channels). Verify the channel by phone at youtube.com/verify. The video stays queued and uploads on a later run. |
 | Runs start far from 06:00 / 13:00 / 17:00 | GitHub's delay changed. The Telegram start message shows how early or late; change `github_schedule_lead_minutes` in `BRAIN.md`, run `--check` and push. |
 | Narration fails | The free voice service occasionally changes. Run `pip install -U edge-tts`. Videos stay queued and retry on the next run. |
