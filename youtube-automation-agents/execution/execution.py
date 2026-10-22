@@ -480,6 +480,11 @@ def run_channels(config, instructions, keys, overrides=None, force_dry_run=False
             print(f" {key}: test run, videos made but not uploaded")
         else:
             print(f" {key}: {results.get(key, 0)} of {planned[key]} video(s) uploaded")
+            if RUNNING_ON_GITHUB and 0 < results.get(key, 0) < planned[key]:
+                # Some but not all: the run stays green, with a yellow warning on its summary page
+                print(f"::warning title={key}: {results[key]} of {planned[key]} uploaded::"
+                      f"{planned[key] - results[key]} video(s) were not made or uploaded. Search step 8 for "
+                      "'[Agent' lines to see why; they are retried in later runs.")
     if failed or len(ready) < len(keys):
         print("\nSome channels uploaded nothing. Scroll up for the [Agent ...] lines explaining why.")
         return 1

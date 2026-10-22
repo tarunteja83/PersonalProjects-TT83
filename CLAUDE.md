@@ -52,8 +52,10 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
 - **Upload safety:** `channels.yaml` `channel_url` is checked against the logged-in channel before saving a login and
   before every upload.
 - **Gemini quota:** runs on 20 and 21 Oct 2026 failed (0 uploaded) when every model returned 429 mid-run. Now the
-  script request also returns title, description, hashtags and footage terms (about 2 requests per video), and the
-  publisher falls back to the source video's title, so rendered videos still upload.
+  script request also returns title, description, hashtags and footage terms (Shorts also get their per-scene
+  terms there: 1 request per Short, 2 per long video, ~20 a day). The key is on the free tier: 20 requests a day per
+  model, reset at 12:30 IST (midnight Pacific). The publisher falls back to the source video's title, so rendered
+  videos still upload. Partial uploads give a yellow `::warning` on the run (still green).
 - **GitHub schedule delay:** scheduled runs started 4 to 5 hours after the cron time, so the cron is shifted earlier
   (see above). Passed go-live slots go live soon after upload; the Telegram start message shows how early or late.
 - **Telegram:** each run sends a start message, then one message per channel (videos, links, go-live times, hashtags).

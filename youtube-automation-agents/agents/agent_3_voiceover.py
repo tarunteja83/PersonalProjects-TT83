@@ -5,6 +5,7 @@ import edge_tts
 from google import genai
 
 from agents.ai import generate_text
+from agents.stock_footage import TERM_PAIR_RULE, footage_rules, parse_scene_hints
 from brain import item_matches
 
 # Roughly 150 spoken words per minute, a pace most listeners follow comfortably
@@ -44,7 +45,7 @@ def group_scenes(sentences, total_seconds, scene_seconds):
 
 
 META_FIELDS = {"TITLE": "seo_title", "DESCRIPTION": "seo_description", "HASHTAGS": "seo_hashtags",
-               "FOOTAGE": "topic_terms"}
+               "FOOTAGE": "topic_terms", "SCENES": "scene_hints"}
 
 
 def parse_script_reply(text):
@@ -63,6 +64,10 @@ def parse_script_reply(text):
             meta[field] = value.strip().strip("*").strip().strip('"')
     if "topic_terms" in meta:
         meta["topic_terms"] = [t.strip().strip('"') for t in meta["topic_terms"].split(",") if t.strip()]
+    if "scene_hints" in meta:
+        meta["scene_hints"] = parse_scene_hints(meta["scene_hints"]) or None
+        if not meta["scene_hints"]:
+            del meta["scene_hints"]
     return body.strip().strip("*").strip(), meta
 
 
@@ -129,8 +134,16 @@ class VoiceoverAgent:
             "FOOTAGE: 5 English stock-footage search terms (1 to 3 words each, comma-separated) for visuals "
             "that match the whole topic"
             + (", child-friendly" if self.profile.get("made_for_kids") else "") + "\n"
-            "SCRIPT:\n<the narration>"
         )
+        if not long:
+            # A Short has a few equal scenes, so footage for each is chosen here instead of in a second request
+            clips = int((self.config.get("footage") or {}).get("clips_per_video", 3))
+            prompt += (
+                f"SCENES: split the narration into {clips} equal parts in order and, for each part, give "
+                + TERM_PAIR_RULE + footage_rules(self.profile)
+                + f" Write them on this one line as 'specific | backup' pairs separated by ' ; ' ({clips} pairs)\n"
+            )
+        prompt += "SCRIPT:\n<the narration>"
 
         script, meta = parse_script_reply(generate_text(self.ai_client, prompt, self.config.get("ai_models")))
         item.update(meta)

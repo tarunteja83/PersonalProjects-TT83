@@ -93,31 +93,59 @@ def topic_fallback(item, profile):
     return with_generic_terms(list(item.get("topic_terms") or []), profile)[:5]
 
 
-def scene_terms(ai_client, scenes, item, profile, models):
-    """For each scene, [specific term, generic backup term] describing what that scene's narration actually says.
+TERM_PAIR_RULE = (
+    "two English stock-footage search terms (1 to 4 words each) for visuals that show what THAT part is talking "
+    "about: first the most specific match, then a more generic backup that stock sites are sure to have (people, "
+    "places, objects, animals, maps, flags, actions). "
+)
+
+
+def footage_rules(profile):
+    """Rules every footage term follows, shared by the script request and the per-scene request.
 
     News channels may name public figures, countries and landmarks in the specific term (stock sites have little
     footage of named people, so the generic backup is tried next). Kids channels never name real people.
     """
-    numbered = "\n".join(f"{i + 1}. {scene['text'][:400]}" for i, scene in enumerate(scenes))
     kids = profile.get("made_for_kids")
-    people_rule = (
-        "Never use names of real people." if kids else
-        "If the scene is about a public figure (a head of state, minister or other government representative), a "
-        "country or a famous place, the first term may name them, e.g. 'Narendra Modi speech' or 'Kremlin Moscow'."
+    return (
+        ("Never use names of real people. The audience is young children, so keep every term child-friendly. "
+         if kids else
+         "If it is about a public figure (a head of state, minister or other government representative), a country "
+         "or a famous place, the first term may name them, e.g. 'Narendra Modi speech' or 'Kremlin Moscow'. ")
+        + ("Some clips will be cartoon animation, so terms like 'cartoon cat' work well. "
+           if profile.get("footage_style") in ("animation", "mixed") else "")
+        + "Avoid graphic violence."
     )
+
+
+def parse_scene_hints(text):
+    """'a | b ; c | d ; e | f' -> [[a, b], [c, d], [e, f]]."""
+    hints = []
+    for part in text.split(";"):
+        options = [t.strip().strip('"') for t in part.split("|") if t.strip().strip('"')]
+        if options:
+            hints.append(options[:2])
+    return hints
+
+
+def hinted_terms(hints, scenes, item, profile):
+    """Spread the script's hints over the scenes in order, each with one topic term as a last resort."""
+    fallback = topic_fallback(item, profile)
+    return [hints[i * len(hints) // len(scenes)] + [fallback[i % len(fallback)]] for i in range(len(scenes))]
+
+
+def scene_terms(ai_client, scenes, item, profile, models):
+    """For each scene, [specific term, generic backup term] describing what that scene's narration actually says."""
+    if item.get("scene_hints") and item.get("format") != "long":
+        # Shorts: the script request already chose terms for the opening, middle and end of the narration
+        return hinted_terms(item["scene_hints"], scenes, item, profile)
+    numbered = "\n".join(f"{i + 1}. {scene['text'][:400]}" for i, scene in enumerate(scenes))
     prompt = (
         f"A narrated video about: {item['original_title']}\n"
         f"Channel niche: {profile.get('niche', '')}\n"
-        + ("The audience is young children, so keep every term child-friendly.\n" if kids else "")
-        + ("Some clips will be cartoon animation, so terms like 'cartoon cat' work well.\n"
-           if profile.get("footage_style") in ("animation", "mixed") else "")
-        + "For EACH numbered scene below, give two English stock-footage search terms (1 to 4 words each) for "
-        "visuals that show what THAT scene is talking about: first the most specific match, then a more generic "
-        "backup that stock sites are sure to have (people, places, objects, animals, maps, flags, actions). "
-        f"{people_rule} Avoid graphic violence.\n"
-        f"Reply with exactly {len(scenes)} lines in the form 'number. specific term | backup term' and nothing else."
-        f"\n\n{numbered}"
+        + "For EACH numbered scene below, give " + TERM_PAIR_RULE + footage_rules(profile)
+        + f"\nReply with exactly {len(scenes)} lines in the form 'number. specific term | backup term' and nothing "
+        f"else.\n\n{numbered}"
     )
     terms = {}
     try:

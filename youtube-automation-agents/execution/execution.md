@@ -77,7 +77,7 @@ flowchart TD
 4. **7. Telegram** ([agent_7_notifier.py](../agents/agent_7_notifier.py)): when a run starts, one message says it's preparing videos (and how late GitHub started it). After each channel finishes, one message per channel lists every uploaded video with its title, link and go-live time, and says if any were not uploaded.
 5. **RESULT:** the log ends with how many videos each channel uploaded. If a channel uploaded nothing, the job is marked failed so you notice.
 
-**Gemini usage:** about 2 requests per video (script with title, then per-scene footage terms). Requests are spaced 4 seconds apart. If every model is rate-limited, the run waits one minute and tries again; if they're still limited, the daily quota is used up, so the rest of the run skips Gemini (footage falls back to the topic terms, titles to the source video's title).
+**Gemini usage:** 1 request per Short (script, title, hashtags and each scene's footage terms together) and 2 per long video (script, then per-scene footage terms for its ~20 scenes): about 20 a day for both channels. The free tier allows 20 requests a day **per model**, reset at 12:30 IST, so the 4 models in `ai_models` share the load. Requests are spaced 4 seconds apart. If every model is rate-limited, the run waits one minute and tries again; if they're still limited, the daily quota is used up, so the rest of the run skips Gemini (footage falls back to the topic terms, titles to the source video's title).
 
 ### A typical day
 
@@ -351,7 +351,7 @@ The manifest, YouTube logins and logos always stay in `GDrive_Mount/YouTube_Auto
 | "Cannot start: No .env file" | Copy `.env.example` to `.env` and fill in the keys. |
 | `--check` warns about YouTube usage | Lower `videos_per_day` or the number of `search_phrases`, or request more quota in Google Cloud Console. |
 | `pip` says "filename too long" | Use a short-path venv (One-Time Setup, step 1). |
-| "429 RESOURCE_EXHAUSTED" from Gemini | The Gemini quota is used up. The run waits one minute and tries again once; if it's still limited, the rest of the run skips Gemini (footage uses topic terms, titles use the source video's title), so finished videos still upload. If it happens every day, use a paid Gemini key or fewer videos. |
+| "429 RESOURCE_EXHAUSTED" from Gemini | The Gemini quota is used up (free tier: 20 requests a day per model, reset at 12:30 IST). The run waits one minute and tries again once; if it's still limited, the rest of the run skips Gemini (footage uses topic terms, titles use the source video's title), so finished videos still upload. If it happens every day, use a paid Gemini key or fewer videos. |
 | "The user has exceeded the number of videos they may upload" | YouTube's daily upload limit for that channel (low for new, unverified channels). Verify the channel by phone at youtube.com/verify. The video stays queued and uploads on a later run. |
 | Runs start far from 06:00 / 13:00 / 17:00 | GitHub's delay changed. The Telegram start message shows how early or late; change `github_schedule_lead_minutes` in `BRAIN.md`, run `--check` and push. |
 | Narration fails | The free voice service occasionally changes. Run `pip install -U edge-tts`. Videos stay queued and retry on the next run. |
