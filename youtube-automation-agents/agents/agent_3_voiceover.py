@@ -252,6 +252,8 @@ class VoiceoverAgent:
                     item["generated_script"] = script
                     item["voiceover_path"] = vo_path
                     item["voice_seconds"] = round(seconds, 2)
+                    # When each sentence starts: the kids host's expressions follow these
+                    item["sentence_timings"] = [[round(start, 2), text] for start, text in sentences]
                     if stock:
                         if item.get("format") != "long":
                             scene_seconds = seconds / int((self.config.get("footage") or {}).get("clips_per_video", 6))

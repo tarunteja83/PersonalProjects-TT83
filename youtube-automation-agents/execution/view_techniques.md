@@ -41,6 +41,7 @@ other people's videos; it breaks YouTube's policies and can get a channel remove
 | Faster cuts [S2] | BRAIN.md `footage` | About 6 clips per Short (was 3) and a new clip about every 8 seconds in long videos (was 15). |
 | A human-sounding voice [S2] | Agent 3, `expressive_voice.py` | Each sentence gets its own pitch, speed and volume (`voice_expression`: lively for kids, measured for news). |
 | Fun, hooky kids stories [S2] | BRAIN.md Agent 3 instructions | Named heroes with a funny trait, a silly problem, three escalating tries, a twist; sound words; the viewer is asked something every 20 to 30 seconds. |
+| A recognisable host for kids [S2] | Agent 4, `mascot.py` | WonderSprout, a woman superhero, narrates and reacts on screen (intro, expressions, outro); a recurring character gives kids a reason to come back. |
 | Trending hashtags for reach [S2] | Agents 1 and 5 | The hashtags the fastest-rising niche videos use right now lead each description, followed by the topic's own (up to 12). |
 
 **Not automated yet (owner):**

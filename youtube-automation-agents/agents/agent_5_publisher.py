@@ -178,7 +178,7 @@ class PublisherAgent:
             lines = ["", "", "---"]
             if sources.get(COMMONS_SITE):
                 # CC BY asks for the author, the licence and a link; public domain clips are credited too
-                lines.append("Real footage via Wikimedia Commons (free licences):")
+                lines.append("Real footage and photos via Wikimedia Commons (free licences):")
                 lines += [f"- {credit}" for credit in sources[COMMONS_SITE]]
             for site, names in sources.items():
                 if site != COMMONS_SITE:

@@ -6,6 +6,7 @@ import random
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from agents.agent_8_analyst import order_phrases
 
@@ -104,6 +105,7 @@ class TrendScoutAgent:
         self.profile = config["profiles"][self.active_key]
         self.manifest_path = config["storage_paths"]["manifest_file"]
         self.search_cache = {}
+        self.out_of_searches = False
 
         api_key = os.getenv("YOUTUBE_API_KEY")
         if not api_key:
@@ -127,7 +129,18 @@ class TrendScoutAgent:
             language = LANGUAGE_CODES.get(self.profile.get("language", "English"))
             if language:
                 params["relevanceLanguage"] = language
-            found = self.youtube.search().list(**params).execute().get("items", [])
+            if self.out_of_searches:
+                return []
+            try:
+                found = self.youtube.search().list(**params).execute().get("items", [])
+            except HttpError as e:
+                if e.resp.status not in (403, 429) or "quota" not in str(e).lower():
+                    raise
+                # YouTube's 100 searches a day are used up: carry on with the videos already found or finished
+                print("[Agent 1: Scout] YouTube's daily search limit is used up (it resets at midnight Pacific "
+                      "time); no new topics this run.")
+                self.out_of_searches = True
+                return []
             self.search_cache[query] = self.rank(found)
         return self.search_cache[query]
 
@@ -180,7 +193,8 @@ class TrendScoutAgent:
         # Phrases whose videos got the most views come first; untried or long-unused phrases are tried again
         queries = order_phrases(self.profile["search_queries"],
                                 [i for i in mine if i.get("format", "short") == self.profile.get("format", "short")])
-        candidates = {query: self.search(query, published_after) for query in queries}
+        # Phrases are searched only when the round-robin reaches them (each search costs 1 of YouTube's 100 a
+        # day), so a run that needs one or two topics usually searches just one or two phrases
 
         new_items, used_sources = [], set()
         # Rising, same-language sources first; a recently used source or another language only if nothing else
@@ -192,7 +206,8 @@ class TrendScoutAgent:
                 for query in queries:
                     if len(new_items) >= max_per_run:
                         break
-                    pick = self.next_candidate(candidates[query], existing_ids, used_sources, excluded,
+                    pick = self.next_candidate(self.search(query, published_after), existing_ids, used_sources,
+                                               excluded,
                                                set() if allow_recent else recent_sources, allow_language)
                     if pick:
                         new_items.append(self.entry(pick, query))

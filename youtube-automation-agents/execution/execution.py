@@ -9,6 +9,7 @@ Answers to every question live in execution/questions.yaml; this file reads them
     python execution/execution.py --authorize kids_edu   # sign in to YouTube for a channel (once)
     python execution/execution.py --ask                  # answer the questions interactively for a one-off run
     python execution/execution.py --learn <youtube link> # analyse a video about getting views (view_techniques.md)
+    python execution/execution.py --hero-art <folder>    # import WonderSprout character pictures (assets/wondersprout)
 
 One-off overrides for a run: --genre "..." --videos 6 --frequency "30 mins" --first-post "09:00" --dry-run
 GitHub uses: --scheduled --cron "<cron>"  and  --due --cron "<cron>"
@@ -584,7 +585,10 @@ def usage_report(config):
         if p["test_run"]:
             continue
         uploads += p["max_videos_per_run"] + long_count
-        searches += len(p["search_queries"]) * runs_per_day * (2 if long_count else 1)
+        # The Scout searches phrases only until it has enough topics: about one search per video, at most every
+        # phrase in each run
+        phrases = len(p["search_queries"])
+        searches += min(p["max_videos_per_run"], phrases * runs_per_day) + min(long_count, phrases * runs_per_day)
     print(f"\nDaily YouTube usage (all channels): {uploads} of {DAILY_UPLOAD_LIMIT} uploads, "
           f"up to {searches} of {DAILY_SEARCH_LIMIT} searches.")
     if uploads > DAILY_UPLOAD_LIMIT or searches > DAILY_SEARCH_LIMIT:
@@ -678,6 +682,40 @@ def authorize(config, key):
     print(f"Saved YouTube login to: {target}")
     print("For GitHub runs, upload this file to Google Drive: YouTube_Automation/00_tokens/")
     return True
+
+
+def import_hero_art(config, folder):
+    from agents import mascot
+    if not os.path.isdir(folder):
+        print(f"No folder at {folder}")
+        return 2
+    import shutil
+    imported = mascot.import_art(folder)
+    # The owner's own intro / outro videos are copied as they are (GitHub refuses files over 100 MB)
+    for name in ("intro.mp4", "outro.mp4", "intro_short.mp4", "outro_short.mp4"):
+        source = os.path.join(folder, name)
+        if os.path.exists(source):
+            megabytes = os.path.getsize(source) / 1e6
+            if megabytes > 50:
+                print(f"Skipped {name}: {megabytes:.0f} MB is too big; export it under 20 MB.")
+                continue
+            shutil.copy(source, os.path.join(mascot.ART_DIR, name))
+            imported.append(name)
+    if not imported:
+        print("Nothing to import. Pictures are named after poses (" + ", ".join(mascot.ART_NAMES) +
+              ", each also as <name>_open); videos are intro.mp4 and outro.mp4. See assets/wondersprout/PROMPTS.md.")
+        return 1
+    print(f"Imported {len(imported)} pose(s) into {mascot.ART_DIR}: {', '.join(imported)}")
+    root = (config.get("local_media") or {}).get("root")
+    # The preview goes to the Google Drive video folder when it's available, else next to the art
+    preview_dir = mascot.ART_DIR
+    if root and os.path.isdir(os.path.dirname(root)):
+        preview_dir = os.path.join(root, "wondersprout_preview")
+    os.makedirs(preview_dir, exist_ok=True)
+    mascot.sheet(os.path.join(preview_dir, "WonderSprout_expressions.png"))
+    print(f"Preview of every expression: {os.path.join(preview_dir, 'WonderSprout_expressions.png')}")
+    print("Commit and push assets/wondersprout so GitHub runs use the new art.")
+    return 0
 
 
 def learn_from(config, link):
@@ -784,6 +822,8 @@ def main():
     parser.add_argument("--due", action="store_true", help="Only print channels due for --cron (used by GitHub)")
     parser.add_argument("--cron", help="The cron expression that triggered a scheduled GitHub run")
     parser.add_argument("--authorize", metavar="CHANNEL", help="Sign in to YouTube for a channel")
+    parser.add_argument("--hero-art", metavar="FOLDER",
+                        help="Import pictures of the WonderSprout character (see assets/wondersprout/PROMPTS.md)")
     parser.add_argument("--learn", metavar="LINK",
                         help="Analyse a YouTube video about getting views; adds its techniques to "
                              "execution/view_techniques.md for review")
@@ -820,6 +860,8 @@ def main():
         return 0 if authorize(config, args.authorize) else 1
     if args.learn:
         return learn_from(config, args.learn)
+    if args.hero_art:
+        return import_hero_art(config, args.hero_art)
     if args.ask:
         return ask_mode(config, instructions)
 

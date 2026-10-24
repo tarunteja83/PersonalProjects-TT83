@@ -72,7 +72,7 @@ flowchart TD
 | **1. Scout** ([agent_1_scout.py](../agents/agent_1_scout.py)) | Finds trending YouTube videos on your `search_phrases` (Shorts for Shorts, 4 to 20 minute videos for long ones), in your `language`. It ranks them by **views per hour** (what is rising right now), skips sources in another language (other scripts, Hinglish, or a title naming another language), tries the search phrases whose videos got the most views first, and avoids recent or excluded source channels. Only the topic is used, never the video itself. | YouTube Data API |
 | **3. Script & Voice** ([agent_3_voiceover.py](../agents/agent_3_voiceover.py)) | Gemini writes an original script, and in the same request the upload title, description, hashtags and 5 footage terms for the whole topic (one request instead of three). Hook first; long videos get 3 to 5 parts, a recap and a comment question. Narrated with your `voice` and `voice_speed`, **sentence by sentence with its own pitch, speed and volume** (`voice_expression`: the hook lifts, questions rise, exclamations pop, plain sentences vary, the ending slows), recording when each sentence is spoken. If the narration is longer than allowed, it's shortened and narrated again. Then it's split into scenes: about 6 per Short, one about every 8 seconds in long videos. | Gemini (or Groq), edge-tts |
 | **2. Footage** ([agent_2_downloader.py](../agents/agent_2_downloader.py)) | Each scene gets a specific search term (news channels name the person, country, ship or event) plus a generic backup. With `footage_style: "real"` (Frontline) the specific term is first looked up as **real footage of the actual people and events** on Wikimedia Commons; otherwise one clip per scene comes from Pixabay (cartoon or real-life per `footage_style`), and only clips whose tags match the scene's words are used. The log prints a **sync report**: each scene's time range, the footage shown and the words spoken. | Wikimedia Commons, Pixabay |
-| **4. Editor** ([agent_4_editor.py](../agents/agent_4_editor.py)) | FFmpeg cuts every clip to its scene's narration time and fits it to 1080×1920 (Short) or 1920×1080 (long); in Shorts, real footage is shown whole on a blurred copy of itself so the people in it aren't cropped out. It joins them, overlays the watermark, adds only the narration, and appends the LIKE → SUBSCRIBE end card. | FFmpeg |
+| **4. Editor** ([agent_4_editor.py](../agents/agent_4_editor.py)) | On WonderSprout, adds the superhero host (intro, corner host with expressions, outro; see below). FFmpeg cuts every clip to its scene's narration time and fits it to 1080×1920 (Short) or 1920×1080 (long); in Shorts, real footage is shown whole on a blurred copy of itself so the people in it aren't cropped out. It joins them, overlays the watermark, adds only the narration, and appends the LIKE → SUBSCRIBE end card. | FFmpeg |
 | **5. Publisher** ([agent_5_publisher.py](../agents/agent_5_publisher.py)) | Confirms the YouTube login is the channel in `channels.yaml`. Uses the title, description and hashtags written with the script, plus the stock-footage credit. If they're missing it asks Gemini, and if Gemini is unavailable (quota used up) it uses the source video's title so the finished video still goes out. Uploads in 8 MB resumable chunks, scheduled to go live at its slot. | YouTube Data API |
 
 3. **6. Cleanup** ([agent_6_cleanup.py](../agents/agent_6_cleanup.py)): on GitHub, deletes clips, narration and published videos. On a laptop, deletes `YouTube_Auto` day folders older than `keep_days`.
@@ -312,6 +312,7 @@ It runs **every channel with `run: true`** using its answers in `questions.yaml`
 | `python execution/execution.py --check` | Validate both files, show plans and YouTube usage, update the GitHub schedule |
 | `python execution/execution.py --list` | Show channels, plans and YouTube login status |
 | `python execution/execution.py --authorize KEY` | Sign in to YouTube for a channel |
+| `python execution/execution.py --hero-art FOLDER` | Import pictures of the WonderSprout character into `assets/wondersprout/` (see [PROMPTS.md](../assets/wondersprout/PROMPTS.md)) |
 | `python execution/execution.py --learn LINK` | Analyse a YouTube video about getting views and add its techniques to [view_techniques.md](view_techniques.md) as a proposal to review (laptop only) |
 
 ---
@@ -324,6 +325,28 @@ It runs **every channel with `run: true`** using its answers in `questions.yaml`
 - **SOURCES** records every video analysed and what was adopted or rejected.
 
 To learn from a new video, run `python execution/execution.py --learn <link>` on the laptop (or give the link to Claude). It adds a "proposed" entry; nothing changes until good rules are copied into ACTIVE RULES. Anything that fakes engagement, misleads viewers or re-uploads other people's content is rejected: it breaks YouTube's policies.
+
+## WonderSprout, the Kids Channel's Superhero Host
+
+WonderSprout is the kids channel's superhero host and narrator (`mascot: "wondersprout"` in `channels.yaml`, made-for-kids channels only). The AI writes each script as her, in the first person, in the channel's voice (Ava).
+
+| Part | What viewers see and hear | Setting (`editing_rules.mascot` in `BRAIN.md`) |
+|---|---|---|
+| Intro (long videos) | She swoops in through a sky of drifting clouds with a whoosh, hovers, waves and says `intro_line` ("Hey kids! This is Wonder Sprout, your fun and learning superhero!"); her name pops up with a sparkle chime, over a soft wind sound (about 6 s) | `intro_long`, `intro_line` |
+| Host | In the bottom-left corner throughout: amazed ("Whoa!"), thinking ("Can you guess…?"), asking (questions), happy, waving, talking, sentence by sentence; her mouth moves with the voice | `host` |
+| Shorts opening | She swoops into her corner during the first second while the hook plays (a separate intro makes Shorts viewers swipe away; `intro_shorts: true` adds it anyway) | `intro_shorts` |
+| Outro | In the sky she waves and says `outro_line` ("Wonder Sprout signing off, kids! We'll meet next time!"), then flies off into the distance with a whoosh and a sparkle trail, before the LIKE / SUBSCRIBE card (about 6 s) | `outro`, `outro_line` |
+
+The intro and outro add about 12 seconds; long kids videos can therefore run a little past `long_video_minutes` (agreed by the owner: up to 7 to 8 minutes is fine).
+
+**Your own intro and outro videos.** If `assets/wondersprout/intro.mp4` / `outro.mp4` exist (optional vertical `intro_short.mp4` / `outro_short.mp4` for Shorts), every video uses them instead of the generated ones, fitted to the video's shape without stretching (a clip without sound gets silence). What to provide: [assets/wondersprout/PROMPTS.md](../assets/wondersprout/PROMPTS.md); drop files in Google Drive `YouTube_Auto/wondersprout_assets/`.
+
+**Her look.** Until pictures of the real character are added, the pipeline draws a simple cartoon version ([mascot.py](../agents/mascot.py)). The real character (from the owner's reference image) needs 9 pictures of her in different poses, because one picture can't change expression or talk:
+1. Make them with the free Gemini app or ChatGPT from the reference image, using the prompts in [assets/wondersprout/PROMPTS.md](../assets/wondersprout/PROMPTS.md) (plain magenta background).
+2. Run `python execution/execution.py --hero-art "<folder with the pictures>"`. It cuts out the background (or keeps a transparent one), crops and resizes them into `assets/wondersprout/`, copies `intro.mp4` / `outro.mp4` if present, and saves a preview sheet.
+3. Commit and push, so GitHub's runs use them. From then on she replaces the drawing everywhere; a missing pose borrows the closest one.
+
+(The Gemini API's free tier can't generate images, so this step is done by hand once; with billing on, it could be automated for under $1.)
 
 ## Where the Footage Comes From
 
@@ -341,7 +364,8 @@ Set under `footage` in `BRAIN.md`:
 - **Match:** every name word of the scene's term must be in the clip's title (a Zelensky scene gets Zelensky footage); longer terms are retried with just the name ("Narendra Modi summit" → "Narendra Modi").
 - **Only the needed seconds** are fetched, from about a quarter into the video (skipping intros), so long speeches aren't downloaded whole. A matching video already used is reused from a later moment rather than adding more credits.
 - **Credit:** each clip's author, licence and link are listed in the description.
-- Scenes with no real match use real-life Pixabay clips.
+- **No video of it? A real photo:** when Commons has no matching video, a freely licensed real photo of the person, place or event is used instead: shown whole on a blurred copy of itself (faces are never cropped) with a slow zoom.
+- Scenes with no real video or photo use real-life Pixabay clips.
 
 News-agency footage (Reuters, AP, ANI, broadcasters' YouTube channels) is **not** used: it's copyrighted, would bring Content ID claims and copyright strikes, and can get a channel removed.
 

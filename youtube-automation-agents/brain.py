@@ -29,6 +29,7 @@ DEFAULT_VOICES = {
 }
 SPEEDS = ["-15%", "-5%", "+0%", "+10%"]
 VOICE_EXPRESSIONS = ["lively", "measured", "off"]
+MASCOTS = ["wondersprout"]
 VIDEO_LENGTHS = [15, 30, 45, 60]
 VISIBILITIES = ["public", "unlisted", "private"]
 FOOTAGE_STYLES = ["any", "animation", "film", "mixed", "real"]
@@ -139,6 +140,8 @@ def build_profile(channel, answers):
         "watermark_text": channel.get("watermark_text") or "@" + re.sub(r"[^A-Za-z0-9]", "", channel["channel_name"]),
         "category_id": str(channel.get("category_id") or ("27" if kids else "24")),
         "logo_file": channel.get("logo_file"),
+        # A superhero host drawn into the videos (agents/mascot.py); kids channels only
+        "mascot": channel.get("mascot"),
         # From the questions file
         "has_answers": answers is not None,
         "enabled": answers is not None and a.get("run", True) is not False,
@@ -197,6 +200,10 @@ def validate_channels(channels):
         for field in ("channel_name", "channel_url", "made_for_kids"):
             if details.get(field) in (None, ""):
                 problems.append(f"{where}: missing required field '{field}'")
+        if details.get("mascot") not in (None, *MASCOTS):
+            problems.append(f"{where}: mascot must be one of {', '.join(MASCOTS)}, or left out")
+        elif details.get("mascot") and not details.get("made_for_kids"):
+            problems.append(f"{where}: the mascot is for kids channels only (made_for_kids: true)")
         if details.get("channel_url") and not parse_channel_url(details["channel_url"]):
             problems.append(f"{where}: channel_url must look like https://www.youtube.com/@handle "
                             "or https://www.youtube.com/channel/UC...")

@@ -75,8 +75,8 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
   phrases by views after 48 h (re-trying phrases unused for 3 days), and posts a daily Telegram report
   (state in `01_manifests/analyst_state.json`).
 - **Engagement overhaul (2026-10-24, owner's viewer feedback, source S2 in view_techniques.md):**
-  - Real footage: Frontline `footage_style: "real"` searches Wikimedia Commons for real video of each scene's named
-    person/place/event (`stock_footage.commons_candidates`): only public domain, CC0, CC BY; every key word of the
+  - Real footage: Frontline `footage_style: "real"` searches Wikimedia Commons for real video, then a real photo
+    (`commons_photo_candidates`, whole photo on blur with a slow zoom), of each scene's named person/place/event (`stock_footage.commons_candidates`): only public domain, CC0, CC BY; every key word of the
     term must be in the file title (longer terms retried with the first two words); only the needed seconds are
     fetched with FFmpeg over HTTP; a used video is reused from a later moment; credits (author, licence,
     `commons.wikimedia.org/?curid=`) go in the description. Real clips are named `*_real.mp4`; the editor shows them
@@ -88,6 +88,20 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
     the owner chose Ava (kids) and Brian (news).
   - Kids writing rules rewritten in BRAIN.md Agent 3 (named hero, silly problem, three tries, twist, sound words,
     talk to the viewer every 20 to 30 s).
+  - WonderSprout host (owner's idea): `agents/mascot.py`. Corner host track (qtrle .mov, 15 fps): `expression_for`
+    picks a pose per sentence (`sentence_timings` from Agent 3), `mouth_track` opens the mouth on loud frames.
+    Voiced intro (long videos) and outro: she flies through a cloud sky (`FlyingSky`) and speaks `intro_line` /
+    `outro_line` (BRAIN.md) in the channel voice via expressive_voice, mixed with wind, whoosh and chime made by
+    FFmpeg (`effect_sources`); about 6 s each, ~1 min each to render. Shorts get a swoop-in, not the intro.
+    Character: the owner wants the real character from their reference image (green/light-blue suit, "WS" logo,
+    dark hair with green streaks, gold belt; copy in Google Drive `YouTube_Auto/wondersprout_preview/`). The
+    Gemini key's free tier has no image generation (limit 0), so the owner makes 9 poses by hand
+    (`assets/wondersprout/PROMPTS.md`) and imports them with `--hero-art` (magenta background cut out). Until
+    then the drawn cartoon is used; once any art exists it is used for every pose (closest pose as fallback).
+    The owner offered to provide their own intro/outro videos and expression pictures: drop folder Google Drive
+    `YouTube_Auto/wondersprout_assets/` (spec `WHAT_TO_PROVIDE.md` = assets/wondersprout/PROMPTS.md). Import with
+    `--hero-art`, then commit assets/wondersprout. `VideoEditorAgent.custom_hero_clip` uses intro.mp4/outro.mp4
+    (and *_short.mp4) when present, fitted on blur, silence added if they have no sound.
   - Trending hashtags: the Scout counts hashtags of the ~15 fastest-rising same-language videos per search
     (`trending_hashtags`, generic and channel tags removed); the publisher puts 2 of them + the top topic tag first,
     up to 12 in total.
@@ -114,8 +128,11 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
   - YouTube: 100 uploads and 100 searches a day per project.
   - Pixabay: 100 requests a minute; searches are paced.
   - GitHub Actions: the repo was made **public** on 2026-10-21 (unlimited minutes; `github_repo_public: true` in
-    BRAIN.md). Run logs are public, so never print secrets. YouTube searches: ~30 a day per channel, so the 100/day
-    search limit caps the project at about 3 channels on this schedule.
+    BRAIN.md). Run logs are public, so never print secrets.
+  - YouTube searches (100/day per project, reset at midnight Pacific = 12:30 IST): since 2026-10-24 the Scout
+    searches phrases lazily (about one search per video, ~13/day for both channels) and, if the limit is used up,
+    logs it and continues with finished videos instead of failing. Local test runs also spend searches: on
+    2026-10-24 testing used up the day's limit (GitHub test run 40071143012, kids Short failed).
 
 ## Conventions
 - **Committing:** commit on a new descriptively named branch, push it, then fast-forward `main` and push. The owner

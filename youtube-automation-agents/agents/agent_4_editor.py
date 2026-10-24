@@ -10,6 +10,7 @@ from PIL import Image, ImageColor, ImageDraw, ImageEnhance, ImageFilter, ImageFo
 from moviepy.editor import (VideoFileClip, AudioFileClip, ImageClip, CompositeVideoClip, CompositeAudioClip,
                             concatenate_videoclips)
 
+from agents import mascot
 from agents.branding import channel_logo
 from agents.stock_footage import REAL_SUFFIX
 from brain import item_matches
@@ -164,6 +165,42 @@ class VideoEditorAgent:
             return None
         return concatenate_videoclips([ImageClip(frame).set_duration(seconds) for frame, seconds in card])
 
+    @staticmethod
+    def custom_hero_clip(kind, width, height, work):
+        """The owner's own intro / outro video (assets/wondersprout/intro.mp4, outro.mp4; intro_short.mp4 and
+        outro_short.mp4 for vertical Shorts if given), fitted to this video's shape without stretching, or None."""
+        names = [f"{kind}_short.mp4", f"{kind}.mp4"] if height > width else [f"{kind}.mp4"]
+        source = next((os.path.join(mascot.ART_DIR, n) for n in names
+                       if os.path.exists(os.path.join(mascot.ART_DIR, n))), None)
+        if not source:
+            return None
+        target = os.path.join(work, f"custom_{kind}.mp4")
+        exe = shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe()
+        has_audio = "Audio:" in subprocess.run([exe, "-i", source], capture_output=True, text=True).stderr
+        # Whole clip on a blurred copy of itself when its shape differs from the video's (e.g. landscape in a Short)
+        fit = (f"[0:v]split[a][b];[a]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},"
+               f"boxblur=20:2[bg];[b]scale={width}:{height}:force_original_aspect_ratio=decrease[fg];"
+               f"[bg][fg]overlay=(W-w)/2:(H-h)/2,fps=30,format=yuv420p,setsar=1[v]")
+        encode = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-ar", "44100", "-ac", "2"]
+        if has_audio:
+            ffmpeg("-i", source, "-filter_complex", fit, "-map", "[v]", "-map", "0:a:0", *encode, target)
+        else:
+            # A clip without sound gets silence, so it still joins the rest of the video
+            ffmpeg("-i", source, "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-filter_complex", fit,
+                   "-map", "[v]", "-map", "1:a", "-shortest", *encode, target)
+        return target
+
+    def mascot_settings(self, item):
+        """{} for channels without a host; else which hero parts this video gets (intro, host, outro)."""
+        if self.profile.get("mascot") != "wondersprout":
+            return {}
+        settings = dict(self.rules.get("mascot") or {})
+        long_video = item.get("format") == "long"
+        # Long videos open with her intro; Shorts by default don't (viewers swipe away from slow starts), and
+        # she swoops into her corner over the opening instead
+        settings["intro"] = settings.get("intro_long", True) if long_video else settings.get("intro_shorts", False)
+        return settings
+
     def render_stock(self, item, output_video):
         """Build a stock-footage video entirely with FFmpeg: much faster than MoviePy for long videos.
 
@@ -214,18 +251,51 @@ class VideoEditorAgent:
             card = self.end_card_frames(Image.open(last_frame).convert("RGB"))
 
             inputs = ["-i", montage, "-i", item["voiceover_path"], "-i", mark]
-            graph = (f"[0:v][2:v]overlay=W-w-{WATERMARK_MARGIN}:H-h-{WATERMARK_MARGIN},format=yuv420p,setsar=1[main];"
+            hero = self.mascot_settings(item)
+            video = "[0:v]"
+            if hero.get("host", True) and hero:
+                # WonderSprout hosts from a corner, her face following the script and her mouth the narration
+                sentences = item.get("sentence_timings") or [(s["start"], s["text"]) for s in scenes]
+                host, hx, hy = mascot.render_host(item["voiceover_path"], sentences, duration, (width, height),
+                                                  os.path.join(work, "host.mov"), entrance=not hero.get("intro"))
+                inputs += ["-i", host]
+                host_index = inputs.count("-i") - 1
+                video = f"[0:v][{host_index}:v]overlay={hx}:{hy}:eof_action=pass[hosted];[hosted]"
+            graph = (f"{video}[2:v]overlay=W-w-{WATERMARK_MARGIN}:H-h-{WATERMARK_MARGIN},format=yuv420p,setsar=1[main];"
                      "[1:a]aresample=44100,aformat=channel_layouts=stereo[voice];")
+            segments = []
+
+            def add_clip(path, name):
+                """Add a ready-made clip with sound (hero intro or outro) as the next segment."""
+                nonlocal graph
+                inputs.extend(["-i", path])
+                index = inputs.count("-i") - 1
+                graph += (f"[{index}:v]scale={width}:{height},fps=30,format=yuv420p,setsar=1[{name}v];"
+                          f"[{index}:a]aresample=44100,aformat=channel_layouts=stereo[{name}a];")
+                segments.append((f"[{name}v]", f"[{name}a]"))
+
+            # She speaks her intro and goodbye in the channel's own narrator voice
+            voice, rate = self.profile["voice"], self.profile.get("voice_rate", "-5%")
+            # A ready-made intro / outro video in assets/wondersprout is used when present; otherwise one is made
+            if hero.get("intro"):
+                add_clip(self.custom_hero_clip("intro", width, height, work) or
+                         mascot.render_intro((width, height), os.path.join(work, "intro.mp4"), load_font, voice, rate,
+                                             hero.get("intro_line", mascot.INTRO_LINE)), "intro")
+            segments.append(("[main]", "[voice]"))
+            if hero.get("outro", True) and hero:
+                add_clip(self.custom_hero_clip("outro", width, height, work) or
+                         mascot.render_outro((width, height), os.path.join(work, "outro.mp4"), load_font, voice, rate,
+                                             hero.get("outro_line", mascot.OUTRO_LINE)), "outro")
             if card:
                 for index, (frame, seconds) in enumerate(card):
                     path = os.path.join(work, f"card{index}.png")
                     Image.fromarray(frame).save(path)
                     inputs += ["-loop", "1", "-t", f"{seconds:.3f}", "-i", path,
                                "-f", "lavfi", "-t", f"{seconds:.3f}", "-i", "anullsrc=r=44100:cl=stereo"]
-                graph += ("[3:v]fps=30,format=yuv420p,setsar=1[c0];[5:v]fps=30,format=yuv420p,setsar=1[c1];"
-                          "[main][voice][c0][4:a][c1][6:a]concat=n=3:v=1:a=1[v][a]")
-            else:
-                graph += "[main]null[v];[voice]anull[a]"
+                    image_index = inputs.count("-i") - 2
+                    graph += f"[{image_index}:v]fps=30,format=yuv420p,setsar=1[c{index}];"
+                    segments.append((f"[c{index}]", f"[{image_index + 1}:a]"))
+            graph += "".join(v + a for v, a in segments) + f"concat=n={len(segments)}:v=1:a=1[v][a]"
             ffmpeg(*inputs, "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-c:a", "aac", "-b:a", "160k",
                    "-movflags", "+faststart", output_video)

@@ -237,6 +237,59 @@ def commons_candidates(term, orientation="portrait", min_seconds=4):
     return found
 
 
+def commons_photo_candidates(term, orientation="portrait", min_width=800):
+    """[(file title, image url, credit)] of freely licensed real photos matching the term (when there is no video)."""
+    pace()
+    search = requests.get(COMMONS_API, headers=COMMONS_HEADERS, timeout=30, params={
+        "action": "query", "list": "search", "srsearch": f"{term} filetype:bitmap", "srnamespace": 6,
+        "srlimit": 20, "format": "json"}).json()
+    titles = [h["title"] for h in search.get("query", {}).get("search", []) if relevant(h["title"], term)]
+    if not titles:
+        return []
+    pace()
+    info = requests.get(COMMONS_API, headers=COMMONS_HEADERS, timeout=30, params={
+        "action": "query", "titles": "|".join(titles[:20]), "prop": "imageinfo",
+        "iiprop": "url|size|mime|extmetadata", "iiurlwidth": 1920, "format": "json"}).json()
+    pages = {p["title"]: p for p in info.get("query", {}).get("pages", {}).values()}
+    found = []
+    for title in titles:
+        page = pages.get(title) or {}
+        details = (page.get("imageinfo") or [{}])[0]
+        meta = details.get("extmetadata", {})
+        licence = meta.get("LicenseShortName", {}).get("value", "")
+        if (not free_licence(licence) or details.get("mime") not in ("image/jpeg", "image/png")
+                or (details.get("width") or 0) < min_width):
+            continue
+        artist = re.sub(r"<[^>]+>", "", meta.get("Artist", {}).get("value", ""))
+        artist = re.sub(r"\s+", " ", html.unescape(artist)).strip() or "unknown"
+        credit = f"{artist[:60]}, {licence}, commons.wikimedia.org/?curid={page.get('pageid')}"
+        found.append((title, details.get("thumburl") or details["url"], credit))
+    return found
+
+
+def photo_clip(url, target, seconds, orientation="landscape"):
+    """Turn a photo into a moving shot lasting `seconds`: the whole photo (faces are never cropped) on a blurred copy
+    of itself, in the video's shape, slowly zooming in (the Ken Burns effect)."""
+    image_path = target + ".img"
+    with requests.get(url, headers=COMMONS_HEADERS, timeout=60) as response:
+        response.raise_for_status()
+        with open(image_path, "wb") as f:
+            f.write(response.content)
+    frames = max(int(seconds * 30), 30)
+    exe = shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe()
+    try:
+        w, h = (1080, 1920) if orientation == "portrait" else (1920, 1080)
+        layout = (f"split[a][b];[a]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},boxblur=25:2[bg];"
+                  f"[b]scale={w}:{h}:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,")
+        subprocess.run([exe, "-hide_banner", "-loglevel", "error", "-y", "-i", image_path, "-vf",
+                        layout + f"zoompan=z='min(zoom+0.0006,1.12)':d={frames}:x='iw/2-(iw/zoom/2)':"
+                        f"y='ih/2-(ih/zoom/2)':s={w}x{h}:fps=30", "-frames:v", str(frames), "-c:v", "libx264",
+                        "-preset", "veryfast",
+                        "-crf", "23", "-pix_fmt", "yuv420p", target], check=True, timeout=300, capture_output=True)
+    finally:
+        os.remove(image_path)
+
+
 def download_segment(url, target, start, seconds):
     """Fetch only `seconds` of video from `start`: FFmpeg seeks over HTTP, so long videos aren't downloaded whole."""
     exe = shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe()
@@ -255,6 +308,22 @@ def name_only(term):
     nothing. Two-word terms aren't shortened ('Western intelligence' must not become 'Western')."""
     words = key_words(term)
     return " ".join(words[:2]) if len(words) > 2 else ""
+
+
+def real_photo(term, path, seconds, orientation, used_ids, cache):
+    """When there's no real video, a real photo of the person, place or event as a slow zoom; (title, credit) or None."""
+    key = ("photo", term)
+    if key not in cache:
+        cache[key] = commons_photo_candidates(term, orientation)
+        if not cache[key] and name_only(term):
+            cache[key] = commons_photo_candidates(name_only(term), orientation)
+    for title, url, credit in cache[key]:
+        if title in used_ids:
+            continue
+        used_ids.add(title)
+        photo_clip(url, path, seconds, orientation)
+        return title, credit
+    return None
 
 
 def real_clip(term, path, seconds, orientation, used_ids, cache, uses):
@@ -297,12 +366,17 @@ def fetch_scene_clips(provider, api_key, terms, destination_dir, prefix, kids=Fa
             target = os.path.join(destination_dir, f"{prefix}_scene{index + 1:03d}{REAL_SUFFIX}")
             scene_seconds = lengths[index] if lengths and index < len(lengths) else 8
             try:
-                got = real_clip(options[0], target, min(max(scene_seconds + 1, 4), 30), orientation, used_ids,
-                                real_cache, uses)
+                seconds = min(max(scene_seconds + 1, 4), 30)
+                got = real_clip(options[0], target, seconds, orientation, used_ids, real_cache, uses)
+                kind = "real footage"
+                if not got:
+                    # No video of it: a real photo of the person, place or event, slowly zooming
+                    got = real_photo(options[0], target, seconds, orientation, used_ids, real_cache)
+                    kind = "real photo"
                 if got:
                     path, chosen = target, options[0]
                     credits.append((COMMONS_SITE, got[1]))
-                    print(f"[Stock footage] Scene {index + 1}: '{options[0]}' -> real footage: {got[0][5:75]}")
+                    print(f"[Stock footage] Scene {index + 1}: '{options[0]}' -> {kind}: {got[0][5:75]}")
             except (requests.RequestException, subprocess.SubprocessError, OSError, ValueError, KeyError) as e:
                 print(f"[Stock footage] Scene {index + 1}: real footage for '{options[0]}' failed "
                       f"({type(e).__name__}); using stock footage.")

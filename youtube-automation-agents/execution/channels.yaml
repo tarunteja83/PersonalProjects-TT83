@@ -27,6 +27,7 @@ channels:
     channel_url: "https://www.youtube.com/channel/UCf9u1ZaejKPPA-oOD8oXVfg"
     made_for_kids: true
     watermark_text: "WonderSprout Kids"
+    mascot: "wondersprout"                 # superhero host in every video (kids channels only); leave out for none
     category_id: "27"
 
 # =====================================================================
