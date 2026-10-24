@@ -71,7 +71,7 @@ flowchart TD
 |---|---|---|
 | **1. Scout** ([agent_1_scout.py](../agents/agent_1_scout.py)) | Finds trending YouTube videos on your `search_phrases` (Shorts for Shorts, 4 to 20 minute videos for long ones), in your `language`. It ranks them by **views per hour** (what is rising right now), skips sources in another language (other scripts, Hinglish, or a title naming another language), tries the search phrases whose videos got the most views first, and avoids recent or excluded source channels. Only the topic is used, never the video itself. | YouTube Data API |
 | **3. Script & Voice** ([agent_3_voiceover.py](../agents/agent_3_voiceover.py)) | Gemini writes an original script, and in the same request the upload title, description, hashtags and 5 footage terms for the whole topic (one request instead of three). Hook first; long videos get 3 to 5 parts, a recap and a comment question. Narrated with your `voice` and `voice_speed`, **sentence by sentence with its own pitch, speed and volume** (`voice_expression`: the hook lifts, questions rise, exclamations pop, plain sentences vary, the ending slows), recording when each sentence is spoken. If the narration is longer than allowed, it's shortened and narrated again. Then it's split into scenes: about 6 per Short, one about every 8 seconds in long videos. | Gemini (or Groq), edge-tts |
-| **2. Footage** ([agent_2_downloader.py](../agents/agent_2_downloader.py)) | Each scene gets a specific search term (news channels name the person, country, ship or event) plus a generic backup. With `footage_style: "real"` (Frontline) the specific term is first looked up as **real footage of the actual people and events** on Wikimedia Commons; otherwise one clip per scene comes from Pixabay (cartoon or real-life per `footage_style`), and only clips whose tags match the scene's words are used. The log prints a **sync report**: each scene's time range, the footage shown and the words spoken. | Wikimedia Commons, Pixabay |
+| **2. Footage** ([agent_2_downloader.py](../agents/agent_2_downloader.py)) | Each scene gets a specific search term (news channels name the person, country, ship or event) plus a generic backup. With `footage_style: "real"` (Frontline) the specific term is first looked up as **real footage of the actual people and events** on Wikimedia Commons; otherwise one clip per scene comes from Pixabay (cartoon or real-life per `footage_style`), and only clips whose tags match the scene's **subject** are used (style words like "cartoon", "funny" or "cute" don't count, so a random cartoon can't stand in for a turtle). On kids channels, when no video shows the subject, a matching Pixabay **cartoon illustration** is used instead, with a slow zoom, before falling back to the generic backup term. The log prints a **sync report**: each scene's time range, the footage shown and the words spoken. | Wikimedia Commons, Pixabay |
 | **4. Editor** ([agent_4_editor.py](../agents/agent_4_editor.py)) | On WonderSprout, adds the superhero host (intro, corner host with expressions, outro; see below). FFmpeg cuts every clip to its scene's narration time and fits it to 1080×1920 (Short) or 1920×1080 (long); in Shorts, real footage is shown whole on a blurred copy of itself so the people in it aren't cropped out. It joins them, overlays the watermark, adds only the narration, and appends the LIKE → SUBSCRIBE end card. | FFmpeg |
 | **5. Publisher** ([agent_5_publisher.py](../agents/agent_5_publisher.py)) | Confirms the YouTube login is the channel in `channels.yaml`. Uses the title, description and hashtags written with the script, plus the stock-footage credit. If they're missing it asks Gemini, and if Gemini is unavailable (quota used up) it uses the source video's title so the finished video still goes out. Uploads in 8 MB resumable chunks, scheduled to go live at its slot. | YouTube Data API |
 
@@ -86,13 +86,13 @@ flowchart TD
 
 ### A typical day
 
-Both channels run together three times a day. Morning and afternoon runs make 1 long video and 2 Shorts per channel; the evening run makes 2 Shorts per channel. Each run sends a Telegram "run started" message, then one message per channel when its videos are uploaded.
+Both channels run together three times a day: 13 videos in all. Each run sends a Telegram "run started" message, then one message per channel when its videos are uploaded, and once a day the Analyst's performance report.
 
-| Run (IST) | Frontline Ledger | WonderSprout |
+| Run (IST) | Frontline Ledger (8 a day) | WonderSprout (5 a day: long videos do better there) |
 |---|---|---|
-| 06:00 morning | long 12:00, Shorts 08:00 and 10:00 | long 11:30, Shorts 08:30 and 10:30 |
-| 13:00 afternoon | long 16:30, Shorts 14:00 and 16:00 | long 15:30, Shorts 14:30 and 16:00 |
-| 17:00 evening | Shorts 18:00 and 19:00 | Shorts 18:00 and 19:00 |
+| 06:00 morning | long 12:00, Shorts 08:00 and 10:00 | long 11:30, Short 09:00 |
+| 13:00 afternoon | long 16:30, Shorts 14:00 and 16:00 | long 16:00, Short 14:30 |
+| 17:00 evening | Shorts 18:00 and 19:00 | long 18:30 |
 
 YouTube publishes each video at its time even though the GitHub job finished hours earlier.
 
@@ -129,10 +129,10 @@ Example: `fetch_time "06:00"`, `first_post_time "07:00"`, `post_frequency "1 hou
 | | Shorts | Long videos |
 |---|---|---|
 | Shape | Vertical 1080×1920 | Landscape 1920×1080 |
-| Length | `video_length_seconds` (15 to 60 s) | `long_video_minutes` (5 to 7 min) |
+| Length | `video_length_seconds` (15 to 60 s) | `long_video_minutes` (Frontline 5 to 7 min, WonderSprout 4 to 6 min plus her intro and outro) |
 | Topics from | Trending Shorts | Trending 4 to 20 minute videos on the same search phrases |
 | Script | Hook plus one idea | Hook, 3 to 5 parts, recap and a question for comments |
-| Footage | 3 scenes, one matching clip each | One matching clip per ~15-second scene (about 20 to 28) |
+| Footage | About 6 scenes (`clips_per_video`), one matching clip each | One matching clip about every 8 seconds (`long_scene_seconds`), about 30 to 50 |
 | Goes live | `first_post_time`, then every `post_frequency` | At each `long_post_times` entry |
 
 A long video takes roughly 12 minutes to build on GitHub (videos are assembled with FFmpeg for speed). `--check` estimates the monthly GitHub time for all your answers.
@@ -179,7 +179,7 @@ If preparing the videos takes longer than planned, a passed go-live time is repl
 | Q24 | When each long video goes live | `long_post_times` | one `"HH:MM"` per long video, e.g. `["14:00", "20:00"]` |
 | Q21 | Kind of clips used | `footage_style` | `"any"` \| `"animation"` (cartoon) \| `"film"` (real-life stock) \| `"mixed"` (cartoon and real-life alternate) \| `"real"` (real footage of the actual people and events from Wikimedia Commons first, then real-life stock). Pexels has no cartoon filter. |
 
-**How source videos are picked:** each run starts from the next search phrase in turn and takes the most-viewed recent Short from each phrase in rotation. Searches favour videos in the channel's language. It takes **at most one video per source channel per run**, avoids channels used for any of that channel's last 5 videos, and never uses channels in `exclude_sources`. This keeps one big channel from supplying everything.
+**How source videos are picked:** the Scout searches the channel's phrases **best first** (the Analyst orders them by how many views their videos got after 48 hours; phrases not used for 3 days are tried again first), and only as many phrases as it needs (about one YouTube search per video). Within a search it ranks videos by **views per hour** (what is rising now) and skips videos in another language. It takes **at most one video per source channel per run**, avoids channels used for any of that channel's last 5 videos, and never uses channels in `exclude_sources`. Only the topic is used, never the video itself.
 
 Delete a line to use its default. Defaults: English, a natural voice for the language, `-5%` speed (`-15%` for kids), 30-second videos, last 5 days, 1 video, `"1 hour"`, daily, `Asia/Kolkata`, public, uploads on. If `first_post_time` is left out, videos go live as soon as they are uploaded.
 
@@ -187,6 +187,9 @@ Delete a line to use its default. Defaults: English, a natural voice for the lan
 
 | Language | Voice | Style |
 |---|---|---|
+| English | `en-US-AvaMultilingualNeural` | Female, expressive, very natural (**WonderSprout**) |
+| English | `en-US-BrianMultilingualNeural` | Male, casual, very natural (**Frontline**) |
+| English | `en-US-EmmaMultilingualNeural` / `en-US-AndrewMultilingualNeural` | Female cheerful / male warm, very natural |
 | English | `en-US-AndrewNeural` | Male, warm, all-rounder |
 | English | `en-US-ChristopherNeural` | Male, authoritative, news |
 | English | `en-US-GuyNeural` | Male, energetic, sports |
@@ -226,7 +229,7 @@ For Hindi and Telugu, scripts, titles and descriptions are written in the native
 | 4 | Google Drive | Create the folder `YouTube_Automation/00_tokens/`. |
 | 5 | rclone | `rclone config` and create a remote named exactly **`gdrive`** (type: drive). |
 | 6 | Stock footage key | Create a free account at [pixabay.com](https://pixabay.com/accounts/register/), open [pixabay.com/api/docs](https://pixabay.com/api/docs/) while logged in, copy the key shown under **Parameters → key**, and add it to `.env` as `PIXABAY_API_KEY`. (A Pexels key in `PEXELS_API_KEY` also works.) |
-| 7 | GitHub secrets | Repo → Settings → Secrets and variables → Actions. Add the 7 secrets below. |
+| 7 | GitHub secrets | Repo → Settings → Secrets and variables → Actions. Add the 8 secrets below. |
 
 | Secret | Contents |
 |---|---|
@@ -341,9 +344,11 @@ The intro and outro add about 12 seconds; long kids videos can therefore run a l
 
 **Your own intro and outro videos.** If `assets/wondersprout/intro.mp4` / `outro.mp4` exist (optional vertical `intro_short.mp4` / `outro_short.mp4` for Shorts), every video uses them instead of the generated ones, fitted to the video's shape without stretching (a clip without sound gets silence). What to provide: [assets/wondersprout/PROMPTS.md](../assets/wondersprout/PROMPTS.md); drop files in Google Drive `YouTube_Auto/wondersprout_assets/`.
 
+**Status:** the owner's character (9 poses) and intro/outro videos were imported on 2026-10-24 and are in `assets/wondersprout/` (kept in git, so GitHub runs use them; `setup_project.py` holds only text files, so copy that folder too when moving the project).
+
 **Her look.** Until pictures of the real character are added, the pipeline draws a simple cartoon version ([mascot.py](../agents/mascot.py)). The real character (from the owner's reference image) needs 9 pictures of her in different poses, because one picture can't change expression or talk:
 1. Make them with the free Gemini app or ChatGPT from the reference image, using the prompts in [assets/wondersprout/PROMPTS.md](../assets/wondersprout/PROMPTS.md) (plain magenta background).
-2. Run `python execution/execution.py --hero-art "<folder with the pictures>"`. It cuts out the background (or keeps a transparent one), crops and resizes them into `assets/wondersprout/`, copies `intro.mp4` / `outro.mp4` if present, and saves a preview sheet.
+2. Run `python execution/execution.py --hero-art "<folder with the pictures>"`. It cuts out the background (or keeps a transparent one), keeps only her (an image AI's corner logo such as "Grok" is dropped), cleans any magenta fringe from her hair, crops and resizes the pictures into `assets/wondersprout/`, imports `intro.mp4` / `outro.mp4` with a small green "WS" badge covering the image AI's logo in the bottom-right corner, and saves a preview sheet.
 3. Commit and push, so GitHub's runs use them. From then on she replaces the drawing everywhere; a missing pose borrows the closest one.
 
 (The Gemini API's free tier can't generate images, so this step is done by hand once; with billing on, it could be automated for under $1.)

@@ -4,87 +4,72 @@ A collection of my own personal projects. Each project lives in its own folder w
 
 | Project | Description |
 |---|---|
-| [youtube-automation-agents](youtube-automation-agents/) | A multi-agent Python pipeline that discovers trending YouTube Shorts, writes original commentary with Gemini, narrates it with a natural-sounding AI voice, edits the video, uploads it to YouTube and reports the result on Telegram. Supports any number of channels, each on its own posting schedule. Runs from any IDE or from GitHub Actions through a single execution file. |
+| [youtube-automation-agents](youtube-automation-agents/) | A multi-agent Python pipeline that runs faceless YouTube channels: finds rising topics, writes original scripts with Gemini, narrates them with an expressive AI voice, matches real or cartoon footage to every scene, edits, uploads on a schedule, reports on Telegram and learns which topics get views. Runs on GitHub Actions three times a day through a single execution file. |
 
----
-
-## YouTube Automation Agents
+--## YouTube Automation Agents
 
 ### Overview
 
-This project automates the full lifecycle of faceless YouTube Shorts channels. Seven specialised agents run in sequence, each doing one job and handing off to the next through a shared JSON manifest.
+This project runs faceless YouTube channels end to end. Eight specialised agents run in sequence for each channel,
+handing work to each other through a shared JSON manifest, three times a day on GitHub Actions.
 
-Everything is driven by two pages and one file:
+Everything is driven by three pages and one file:
 - **[execution/channels.yaml](youtube-automation-agents/execution/channels.yaml):** who each channel is. You create channels on YouTube yourself and list them here.
-- **[execution/questions.yaml](youtube-automation-agents/execution/questions.yaml):** what and when each channel posts. It holds the answers to 19 questions per channel, with the allowed options written beside each one.
-- **[execution/execution.py](youtube-automation-agents/execution/execution.py):** the one file that runs everything. It reads the answers every time, whether started by GitHub, an IDE, a terminal or Copilot.
+- **[execution/questions.yaml](youtube-automation-agents/execution/questions.yaml):** what and when each channel posts (genre, searches, voice, schedule, long videos, footage style), with the allowed options written beside each answer.
+- **[execution/view_techniques.md](youtube-automation-agents/execution/view_techniques.md):** what gets views. Its ACTIVE RULES are sent to the AI with every video; it also logs every video about growth that was analysed (`--learn`).
+- **[execution/execution.py](youtube-automation-agents/execution/execution.py):** the one file that runs everything, from GitHub, an IDE, a terminal or Copilot.
 
 **Start with [execution/execution.md](youtube-automation-agents/execution/execution.md)**: it has setup, rules and every command.
 
-Each day, at a channel's fetch time, the pipeline prepares that day's videos and uploads them with staggered go-live times. YouTube then publishes one Short every 15 mins, 30 mins, 1 hour or 3 hours, plus up to 4 landscape **long videos (5 to 7 minutes)** at set times. Narration supports English, Hindi and Telugu. Stock footage can be real, cartoon animation, or a mix.
-
-| Channel key | Channel | Audience | Language and voice | Posting (IST) |
+| Channel key | Channel | Audience | Voice | Daily (IST) |
 |---|---|---|---|---|
-| `geopolitics_war` | Frontline Ledger | General | English, `en-US-ChristopherNeural` | Fetch 06:00, 12 videos hourly from 07:00 |
-| `kids_edu` | WonderSprout | Children aged 6 to 10 (marked Made for Kids) | English, `en-US-EmmaNeural` | Fetch 15:00, 4 videos hourly from 16:00 |
+| `geopolitics_war` | Frontline Ledger TT83 | General | `en-US-BrianMultilingualNeural`, measured | 6 Shorts and 2 long videos (5 to 7 min) with real footage of the people and events |
+| `kids_edu` | WonderSprout Kids TT83 | Children (Made for Kids) | `en-US-AvaMultilingualNeural`, lively | 2 Shorts and 3 long videos (4 to 6 min), hosted by the WonderSprout superhero |
+
+Runs start at 06:00, 13:00 and 17:00 IST; each run makes the videos due before the next run and schedules them on
+YouTube. Narration supports English, Hindi and Telugu.
 
 ### How It Works
 
 ```
-  channels.yaml (who)  +  questions.yaml (what & when)  +  BRAIN.md (global rules)
-                                   │
-                                   ▼
-             execution/execution.py  →  orchestrator.py
-                                   │
-  ┌──────────┬──────────┬──────────┼──────────┬──────────┬──────────┐
-  ▼          ▼          ▼          ▼          ▼          ▼          ▼
-Agent 1   Agent 2    Agent 3    Agent 4    Agent 5    Agent 6    Agent 7
-Scout ──▶ Download ─▶ Script & ─▶ Editor ──▶ Publisher ▶ Cleanup ─▶ Telegram
-                      Voiceover                                     Notifier
-  │          │          │          │          │          │          │
-  └──────────┴──────────┴──── trends.json manifest ──────┴──────────┘
+  channels.yaml (who) + questions.yaml (what & when) + BRAIN.md (global rules) + view_techniques.md (what gets views)
+                                       │
+                                       ▼
+                 execution/execution.py  →  orchestrator.py   (Telegram: "run started")
+                                       │
+  ┌─────────┬──────────┬──────────┬────┴─────┬──────────┬──────────┬──────────┬──────────┐
+  ▼         ▼          ▼          ▼          ▼          ▼          ▼          ▼
+Agent 1   Agent 3    Agent 2    Agent 4    Agent 5    Agent 6    Agent 7    Agent 8
+Scout ──▶ Script & ▶ Footage ─▶ Editor ──▶ Publisher ▶ Cleanup ─▶ Telegram ▶ Analyst
+          Voice                                                   (per channel) (daily report)
+  │         │          │          │          │          │          │          │
+  └─────────┴──────────┴──────── trends.json manifest ─┴──────────┴──────────┘
 ```
 
-Every video tracked in the manifest moves through these statuses:
-
-`discovered` → `downloaded` → `voiced` → `edited` → `published`
-
-(`download_failed` is recorded if a download fails.) Because each agent only picks up items in the status it expects, a failed or interrupted run can safely be re-run and will continue where it left off.
+Every video moves through `discovered` → `voiced` → `ready_to_edit` → `edited` → `published` (also `expired`,
+`download_failed`). Each agent only picks up items in the status it expects, so an interrupted run continues where it
+left off, and finished videos that missed their run are uploaded by the next one.
 
 ### The Agents
 
 | # | Agent | File | What it does |
 |---|---|---|---|
-| 1 | **Trend Scout** | [agent_1_scout.py](youtube-automation-agents/agents/agent_1_scout.py) | Uses the YouTube Data API v3 to search the channel's search phrases, in its language, for the most-viewed Shorts from the last `lookback_days`. Rotates across phrases, takes at most one video per source channel, avoids recently used sources and any in `exclude_sources`, and adds up to `videos_per_day` new entries. |
-| 2 | **Footage** | [agent_2_downloader.py](youtube-automation-agents/agents/agent_2_downloader.py) | Downloads free stock clips from Pixabay (or Pexels) that match each topic, using search terms picked by Gemini ([stock_footage.py](youtube-automation-agents/agents/stock_footage.py)). Optionally re-uses the trending video itself with `yt-dlp`, but only from a laptop, because YouTube blocks downloads from cloud servers. |
-| 3 | **Script & Voiceover** | [agent_3_voiceover.py](youtube-automation-agents/agents/agent_3_voiceover.py) | Asks Gemini 2.5 Flash to write an original commentary script sized to the channel's target video length, in its language and tone, avoiding any banned terms. Narrates it with the channel's Microsoft neural voice and speed via `edge-tts` (free, no API key). |
-| 4 | **Video Editor** | [agent_4_editor.py](youtube-automation-agents/agents/agent_4_editor.py) | Uses MoviePy to trim or loop the clip to match the voiceover, apply a slight crop zoom, replace the original audio with the AI narration (set by `original_audio_volume` in BRAIN.md, currently 0), overlay the channel watermark, and add a 3-second end card (channel name, LIKE first, then SUBSCRIBE). Graphics are drawn with Pillow, so ImageMagick isn't needed. |
-| 5 | **Publisher** | [agent_5_publisher.py](youtube-automation-agents/agents/agent_5_publisher.py) | Generates an SEO title, description and hashtags with Gemini, adds a plain-text credit to the original creator, and uploads to the correct YouTube channel via OAuth. Sets visibility, Made for Kids and synthetic-media disclosure, and schedules each video's go-live time on YouTube according to `first_post_time` and `post_frequency`. |
-| 6 | **Cleanup** | [agent_6_cleanup.py](youtube-automation-agents/agents/agent_6_cleanup.py) | Deletes raw downloads and voiceovers after publishing, and removes edited videos from previous days to keep storage small. |
-| 7 | **Telegram Notifier** | [agent_7_notifier.py](youtube-automation-agents/agents/agent_7_notifier.py) | Posts a summary to a Telegram channel with links to the newly published Shorts, or a "nothing new" status if no video was published. |
-
-### Configuration
-
-- **[execution/channels.yaml](youtube-automation-agents/execution/channels.yaml), the channel page:** channel name, made for kids, watermark and category.
-- **[execution/questions.yaml](youtube-automation-agents/execution/questions.yaml), the answers:**
-  - **Content:** genre, search phrases, tone, video length, banned words, how recent the source videos must be.
-  - **Voice:** language (English, Hindi or Telugu), voice and speed.
-  - **Schedule:** fetch time, first go-live time, frequency (15 mins, 30 mins, 1 hour or 3 hours), videos per day, days, timezone.
-  - **Publishing:** visibility and test run.
-
-  Options are written beside each question so you can copy and paste them.
-- **[BRAIN.md](youtube-automation-agents/BRAIN.md), global rules:** storage folders, editing style, upload and cleanup rules, plus an `## AGENT INSTRUCTIONS` section in plain English that is passed directly into the Gemini prompts.
+| 1 | **Trend Scout** | [agent_1_scout.py](youtube-automation-agents/agents/agent_1_scout.py) | Searches YouTube for trending videos on the channel's phrases (best-performing phrases first, only as many searches as needed), ranks them by views per hour, skips other-language sources, and notes the niche's trending hashtags. Only the topic is used. |
+| 3 | **Script & Voice** | [agent_3_voiceover.py](youtube-automation-agents/agents/agent_3_voiceover.py), [expressive_voice.py](youtube-automation-agents/agents/expressive_voice.py) | Gemini (Groq as a free backup) writes an original script plus title, description, hashtags and footage terms in one request. `edge-tts` narrates it sentence by sentence with varied pitch, speed and volume, and the timings split it into scenes. |
+| 2 | **Footage** | [agent_2_downloader.py](youtube-automation-agents/agents/agent_2_downloader.py), [stock_footage.py](youtube-automation-agents/agents/stock_footage.py) | One clip per scene. Frontline: real video, then a real photo, of the named person or event from Wikimedia Commons (free licences only), else Pixabay. WonderSprout: a Pixabay cartoon or real clip whose tags match the scene's subject, else a matching cartoon illustration. |
+| 4 | **Editor** | [agent_4_editor.py](youtube-automation-agents/agents/agent_4_editor.py), [mascot.py](youtube-automation-agents/agents/mascot.py) | FFmpeg cuts each clip to its scene, adds the narration, watermark and LIKE / SUBSCRIBE end card. On WonderSprout it adds the superhero host in a corner (expressions follow the script), her intro and her outro. |
+| 5 | **Publisher** | [agent_5_publisher.py](youtube-automation-agents/agents/agent_5_publisher.py) | Confirms the login is the right channel, adds up to 12 hashtags and the footage credits, and uploads in resumable chunks scheduled to go live at the channel's times. |
+| 6 | **Cleanup** | [agent_6_cleanup.py](youtube-automation-agents/agents/agent_6_cleanup.py) | Deletes files no longer needed. |
+| 7 | **Telegram** | [agent_7_notifier.py](youtube-automation-agents/agents/agent_7_notifier.py) | One message per channel: each video's title, link, go-live time and hashtags. |
+| 8 | **Analyst** | [agent_8_analyst.py](youtube-automation-agents/agents/agent_8_analyst.py) | Records every upload's views, scores search phrases by views after 48 hours (the Scout uses the best first), and posts a daily report. |
 
 ### Running
 
 | Where | How |
 |---|---|
-| GitHub (automatic) | Each channel runs at its `fetch_time` from `questions.yaml`. |
-| GitHub (manual) | Actions → **Daily YouTube Multi-Agent Pipeline** → **Run workflow**. Blank fields use `questions.yaml`. |
-| Any IDE, terminal or Copilot | Run `execution/execution.py`. It runs every channel with `run: true` using `questions.yaml`. |
-| Interactive one-off | `execution/execution.py --ask` asks the questions on screen for one run. |
-
-Full instructions and rules: [execution/execution.md](youtube-automation-agents/execution/execution.md).
+| GitHub (automatic) | Three runs a day from the schedule in `questions.yaml`. |
+| GitHub (manual) | Actions → **Daily YouTube Multi-Agent Pipeline** → **Run workflow**. |
+| Any IDE, terminal or Copilot | `python execution/execution.py` (all channels), `--channel KEY`, `--dry-run`, `--check`, `--learn LINK`, `--hero-art FOLDER` and more: see [execution.md](youtube-automation-agents/execution/execution.md). |
 
 ### Project Structure
 
@@ -93,70 +78,62 @@ youtube-automation-agents/
 ├── execution/
 │   ├── execution.py         # THE file you run (IDE, terminal or GitHub)
 │   ├── execution.md         # Setup, rules and every command
-│   ├── questions.yaml       # The answers: what and when each channel posts
-│   └── channels.yaml        # The channel page: who each channel is
+│   ├── questions.yaml       # What and when each channel posts
+│   ├── channels.yaml        # Who each channel is
+│   └── view_techniques.md   # What gets views (rules sent to the AI, analysed sources)
+├── assets/wondersprout/     # The WonderSprout character (9 poses) and her intro / outro videos
 ├── BRAIN.md                 # Global rules and AI agent instructions
-├── orchestrator.py          # Runs agents 1 to 7 for one channel
-├── brain.py                 # Loads the config and works out posting schedules
-├── agents/                  # One file per agent
-├── setup_project.py         # Generator script that recreates the whole project
+├── orchestrator.py          # Runs the agents for one channel
+├── brain.py                 # Loads the config and works out schedules
+├── agents/                  # One file per agent, plus ai.py, expressive_voice.py, stock_footage.py, mascot.py, learner.py
+├── setup_project.py         # Recreates every text file of the project
 ├── requirements.txt         # Python dependencies
 └── .env.example             # Template for API keys
 ```
 
-The scheduled workflow lives at the repository root in [.github/workflows/daily_youtube_agents.yml](.github/workflows/daily_youtube_agents.yml), because GitHub only runs workflows from there. It runs every step inside `youtube-automation-agents/`.
-
-When run on a laptop or IDE, video files go to the Google Drive folder `H:/My Drive/YouTube_Auto/<YYYY-MM-DD>/download` and `/upload`, and day folders older than 2 days are deleted automatically (`local_media` in BRAIN.md). Shared state and GitHub runs use `GDrive_Mount/YouTube_Automation/` (ignored by Git), mirrored to the same folder in Google Drive:
-
-```
-00_tokens/               # YouTube login per channel (token_<channel_key>.json)
-01_manifests/            # trends.json, the shared state between agents
-02_raw_videos/           # Downloaded source clips
-02_audio_voiceovers/     # Generated narration (.mp3)
-03_edited_videos/        # Final videos ready to upload
-04_published_archive/    # Archive folder
-```
+The workflow lives at the repository root in [.github/workflows/daily_youtube_agents.yml](.github/workflows/daily_youtube_agents.yml).
+GitHub runs keep their state (logins, manifest, finished videos) in Google Drive `YouTube_Automation/` through rclone;
+laptop runs write videos to `H:/My Drive/YouTube_Auto/<date>/`.
 
 ### Tech Stack
 
-- **Python 3.11+**
-- **YouTube Data API v3**: trend discovery and uploads
-- **Google Gemini 2.5 Flash** (`google-genai`): script and SEO generation
-- **edge-tts**: Microsoft neural text-to-speech voices
-- **yt-dlp**: video download
-- **MoviePy 1.0.3**, **FFmpeg**, **Pillow**: video editing and watermarks
-- **Telegram Bot API**: notifications
-- **GitHub Actions** + **rclone** + **Google Drive**: scheduled cloud runs with persistent storage
+- **Python 3.11** (GitHub) / 3.14 (laptop)
+- **YouTube Data API v3**: trends, uploads, view counts
+- **Google Gemini** (`google-genai`, 3.x flash models) with **Groq** (`gpt-oss-120b`) as a free backup
+- **edge-tts**: Microsoft neural voices, narrated sentence by sentence
+- **Wikimedia Commons** (real footage and photos) and **Pixabay** (stock clips and cartoon illustrations)
+- **FFmpeg** and **Pillow**: editing, the WonderSprout host, intro and outro
+- **Telegram Bot API**, **GitHub Actions**, **rclone** + **Google Drive**
 
 ### Getting Started
 
 Follow **One-Time Setup** in [execution/execution.md](youtube-automation-agents/execution/execution.md). In short:
 
-1. **Python environment:** create one with Python 3.11+ and run `pip install -r requirements.txt`. On Windows, use a short path such as `C:\Users\<you>\venvs\yt` to avoid the long-path error; no admin rights are needed.
-2. **API keys:** copy `.env.example` to `.env` and add your YouTube and Gemini keys. Telegram is optional.
-3. **Upload permission:** save your Google OAuth Desktop client as `client_secret.json`, and publish the consent screen so logins don't expire after 7 days.
-4. **YouTube logins:** sign in once per channel with `python execution/execution.py --authorize <channel_key>`, then upload each token file to Google Drive `YouTube_Automation/00_tokens/`.
-5. **GitHub secrets:** add the 7 secrets `YOUTUBE_API_KEY`, `GEMINI_API_KEY`, `PIXABAY_API_KEY` (free at pixabay.com/api/docs), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHANNEL_ID`, `CLIENT_SECRET_JSON` and `RCLONE_CONFIG_GDRIVE`.
-6. **Check and test:** `python execution/execution.py --check`, then `python execution/execution.py --channel geopolitics_war --dry-run`.
+1. **Python environment:** Python 3.11+ and `pip install -r requirements.txt` (on Windows, a short path such as `C:\Users\<you>\venvs\yt`).
+2. **API keys:** copy `.env.example` to `.env` and add the YouTube, Gemini, Pixabay and (optional) Groq and Telegram keys.
+3. **Upload permission:** save the Google OAuth Desktop client as `client_secret.json` and publish the consent screen.
+4. **YouTube logins:** `python execution/execution.py --authorize <channel_key>` per channel, then upload the token to Google Drive `YouTube_Automation/00_tokens/`.
+5. **GitHub secrets:** `YOUTUBE_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `PIXABAY_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHANNEL_ID`, `CLIENT_SECRET_JSON`, `RCLONE_CONFIG_GDRIVE`.
+6. **Check and test:** `python execution/execution.py --check`, then `--channel <key> --dry-run`.
 
 ### Regenerating the Project
 
-`setup_project.py` contains the full source of every file as embedded strings. Running it from inside `youtube-automation-agents/` recreates the project from scratch, including the workflow at the repository root:
+`setup_project.py` contains every text file as embedded strings. Running it from inside `youtube-automation-agents/`
+recreates them (and the workflow at the repository root). Binary files (the WonderSprout pictures and videos in
+`assets/`) aren't embedded: copy that folder too.
 
-```bash
-python setup_project.py
-```
-
-> This overwrites existing files with the embedded versions, so any local edits will be lost.
+> It overwrites existing files with the embedded versions, so any local edits will be lost.
 
 ### Responsible Use
 
-This tool republishes clips from other creators alongside new commentary. Before running it on a real channel:
-
-- Make sure your use is genuinely transformative and complies with YouTube's policies on reused content and with copyright law in your country.
-- Keep the creator credit in descriptions and the synthetic-media disclosure enabled.
-- Review kids channel output carefully; content marked Made for Kids is subject to COPPA and stricter YouTube rules.
+- **No reused videos:** trending videos supply only the topic. Footage is free stock (Pixabay) or freely licensed real
+  footage and photos (Wikimedia Commons: public domain, CC0 and CC BY only), credited in every description.
+  Copyrighted news-agency footage is never used.
+- **Disclosure:** the synthetic-media flag is on for every upload (AI voice and AI-made host).
+- **Kids:** WonderSprout is marked Made for Kids (COPPA and stricter YouTube rules); stories are original, never
+  copyrighted characters, and footage searches use safe search.
 
 ### Security
 
-`.env`, `client_secret*.json` and `token_*.json` are listed in `.gitignore`. Never commit them. If a key is ever exposed, revoke and regenerate it immediately.
+`.env`, `client_secret*.json` and `token_*.json` are in `.gitignore`; never commit them. The repository is public:
+GitHub secrets stay hidden and are masked in logs. If a key is ever exposed, revoke and regenerate it immediately.

@@ -234,12 +234,72 @@ def hero_image(expression="happy", mouth_open=False, height=None):
     return image
 
 
-def import_art(source_dir, out_dir=ART_DIR, height=1200):
-    """Turn pictures of her into transparent pose images: cut out the plain background, crop and resize.
+def clean_cutout(image):
+    """Keep only the character in a transparent picture.
 
-    Pictures in source_dir are named after poses (happy.png, talk.png, wave_open.jpg, fly.png...). The background
-    colour is taken from the picture's corners, so any plain backdrop works (magenta is easiest: it's in none of
-    her colours). Returns the poses imported.
+    - Marks that aren't part of her (an image AI's logo in a corner, specks) are dropped: only her shape, and
+      pieces right next to it such as loose strands of hair, are kept.
+    - Leftover backdrop-coloured pixels along her outline (a magenta fringe round the hair) are removed: the
+      backdrop colour is read from the transparent pixels, which still hold it.
+    - The edge is softened slightly, so she sits naturally over video.
+    """
+    import numpy as np
+    alpha = np.asarray(image.getchannel("A"))
+    solid = alpha > 20
+    if not solid.any():
+        return image
+    # Her shape: flood-fill from the visible pixel nearest the centre of all visible pixels
+    ys, xs = np.nonzero(solid)
+    nearest = np.argmin((ys - ys.mean()) ** 2 + (xs - xs.mean()) ** 2)
+    # .copy(): an image made straight from a NumPy array can be read-only, and the fill would silently do nothing
+    marked = Image.fromarray(np.where(solid, 255, 0).astype(np.uint8), "L").copy()
+    ImageDraw.floodfill(marked, (int(xs[nearest]), int(ys[nearest])), 128)
+    body = np.asarray(marked) == 128
+    # Keep anything within about 3% of the picture's width of her (hair strands); drop what's further away
+    small = Image.fromarray(np.where(body, 255, 0).astype(np.uint8), "L").resize(
+        (max(1, image.width // 4), max(1, image.height // 4)), Image.BOX)
+    reach = max(3, (image.width // 4) // 33) | 1
+    near = np.asarray(small.filter(ImageFilter.MaxFilter(reach)).resize(image.size, Image.NEAREST)) > 0
+    keep = body | (solid & near)
+    # The backdrop colour, from the pixels that are transparent
+    rgb = np.asarray(image.convert("RGB")).astype(np.int32)
+    hidden = alpha < 10
+    if hidden.any():
+        backdrop = np.median(rgb[hidden], axis=0)
+        inner = np.asarray(Image.fromarray(np.where(keep, 255, 0).astype(np.uint8), "L")
+                           .filter(ImageFilter.MinFilter(7))) > 0
+        edge = keep & ~inner
+        tinted = np.sqrt(((rgb - backdrop) ** 2).sum(axis=2)) < 140
+        keep &= ~(edge & tinted)
+        # Hair strands further in can still carry a tint of the backdrop: take that colour out of the outer band
+        # (about 12 pixels) instead of deleting them. Only pixels whose red AND blue both exceed green change, so
+        # skin and her green and blue costume keep their colours.
+        small_keep = Image.fromarray(np.where(keep, 255, 0).astype(np.uint8), "L").resize(
+            (max(1, image.width // 4), max(1, image.height // 4)), Image.BOX)
+        deep = np.asarray(small_keep.filter(ImageFilter.MinFilter(7)).resize(image.size, Image.NEAREST)) > 250
+        band = keep & ~deep
+        spill = np.minimum(rgb[..., 0], rgb[..., 2]) - rgb[..., 1]
+        fix = band & (spill > 0) if backdrop[0] > backdrop[1] and backdrop[2] > backdrop[1] else np.zeros_like(band)
+        rgb = rgb.copy()
+        rgb[..., 0] = np.where(fix, rgb[..., 0] - spill, rgb[..., 0])
+        rgb[..., 2] = np.where(fix, rgb[..., 2] - spill, rgb[..., 2])
+        # What's left of a red-purple cast on those strands goes back to her dark brown hair colour
+        cast = band & (rgb[..., 0] - rgb[..., 1] > 25) & (rgb[..., 2] - rgb[..., 1] > -5) if fix.any() else fix
+        rgb[..., 0] = np.where(cast, np.minimum(rgb[..., 0], rgb[..., 1] + 12), rgb[..., 0])
+        rgb[..., 2] = np.where(cast, np.minimum(rgb[..., 2], rgb[..., 1] + 6), rgb[..., 2])
+    soft = Image.fromarray(np.where(keep, 255, 0).astype(np.uint8), "L").filter(ImageFilter.GaussianBlur(1.2))
+    new_alpha = np.minimum(np.asarray(soft), alpha).astype(np.uint8)
+    result = Image.fromarray(np.clip(rgb, 0, 255).astype(np.uint8), "RGB").convert("RGBA")
+    result.putalpha(Image.fromarray(new_alpha, "L"))
+    return result
+
+
+def import_art(source_dir, out_dir=ART_DIR, height=1200):
+    """Turn pictures of her into transparent pose images: cut out the background, clean the edges, crop, resize.
+
+    Pictures in source_dir are named after poses (happy.png, talk.png, wave_open.jpg, fly.png...). A transparent
+    PNG keeps its own transparency; otherwise the plain backdrop colour is taken from the picture's corners (magenta
+    is easiest: it's in none of her colours). Returns the poses imported.
     """
     import numpy as np
     os.makedirs(out_dir, exist_ok=True)
@@ -250,27 +310,22 @@ def import_art(source_dir, out_dir=ART_DIR, height=1200):
             continue
         picture = Image.open(os.path.join(source_dir, file))
         if picture.mode in ("RGBA", "LA", "PA") and picture.convert("RGBA").getchannel("A").getextrema()[0] < 128:
-            # Already a transparent cut-out: keep its own transparency
-            image = picture.convert("RGBA")
-            box = image.getchannel("A").point(lambda a: 255 if a > 20 else 0).getbbox()
-            image = image.crop(box) if box else image
-            image.resize((round(image.width * height / image.height), height), Image.LANCZOS).save(
-                os.path.join(out_dir, f"{name}.png"))
-            done.append(name)
-            continue
-        rgb = np.asarray(picture.convert("RGB")).astype(np.float32)
-        h, w, _ = rgb.shape
-        k = max(4, min(h, w) // 40)
-        corners = np.concatenate([rgb[:k, :k].reshape(-1, 3), rgb[:k, -k:].reshape(-1, 3),
-                                  rgb[-k:, :k].reshape(-1, 3), rgb[-k:, -k:].reshape(-1, 3)])
-        background = np.median(corners, axis=0)
-        distance = np.sqrt(((rgb - background) ** 2).sum(axis=2))
-        alpha = np.clip((distance - 40) / 50, 0, 1)            # soft edge between 40 and 90 colour steps away
-        # Remove the background colour's tint from the soft edge pixels
-        spill = (1 - alpha)[..., None]
-        clean = np.clip((rgb - background * spill) / np.maximum(alpha[..., None], 0.05), 0, 255)
-        rgba = np.dstack([np.where(alpha[..., None] > 0, clean, rgb), alpha * 255]).astype(np.uint8)
-        image = Image.fromarray(rgba, "RGBA")
+            image = picture.convert("RGBA")                   # already a transparent cut-out
+        else:
+            rgb = np.asarray(picture.convert("RGB")).astype(np.float32)
+            h, w, _ = rgb.shape
+            k = max(4, min(h, w) // 40)
+            corners = np.concatenate([rgb[:k, :k].reshape(-1, 3), rgb[:k, -k:].reshape(-1, 3),
+                                      rgb[-k:, :k].reshape(-1, 3), rgb[-k:, -k:].reshape(-1, 3)])
+            background = np.median(corners, axis=0)
+            distance = np.sqrt(((rgb - background) ** 2).sum(axis=2))
+            alpha = np.clip((distance - 40) / 50, 0, 1)        # soft edge between 40 and 90 colour steps away
+            # Remove the background colour's tint from the soft edge pixels
+            spill = (1 - alpha)[..., None]
+            clean = np.clip((rgb - background * spill) / np.maximum(alpha[..., None], 0.05), 0, 255)
+            rgba = np.dstack([np.where(alpha[..., None] > 0, clean, rgb), alpha * 255]).astype(np.uint8)
+            image = Image.fromarray(rgba, "RGBA")
+        image = clean_cutout(image)
         box = image.getchannel("A").point(lambda a: 255 if a > 20 else 0).getbbox()
         if box:
             image = image.crop(box)
@@ -278,6 +333,41 @@ def import_art(source_dir, out_dir=ART_DIR, height=1200):
         image.save(os.path.join(out_dir, f"{name}.png"))
         done.append(name)
     return done
+
+
+def ws_badge(width, font_loader):
+    """A small green "WS" badge with a gold border (her emblem), `width` pixels wide."""
+    scale = 4
+    w, h = width * scale, round(width * 0.52) * scale
+    badge = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(badge)
+    draw.rounded_rectangle([0, 0, w - 1, h - 1], radius=h // 2, fill=SUIT, outline=GOLD, width=max(2, h // 12))
+    font = font_loader(round(h * 0.62))
+    box = draw.textbbox((0, 0), "WS", font=font, stroke_width=max(1, h // 24))
+    draw.text(((w - box[2] - box[0]) / 2, (h - box[3] - box[1]) / 2), "WS", font=font, fill=GOLD,
+              stroke_width=max(1, h // 24), stroke_fill="#1C6B2E")
+    return badge.resize((width, round(width * 0.52)), Image.LANCZOS)
+
+
+def cover_corner_logo(source, target, font_loader, work_dir):
+    """Copy a video with a "WS" badge over its bottom-right corner, where image AIs put their logo (e.g. "Grok").
+
+    The badge is about 12% of the video's width, just inside the corner; sound is copied unchanged.
+    """
+    import re
+    import subprocess
+    info = subprocess.run([ffmpeg_exe(), "-i", source], capture_output=True, text=True).stderr
+    width, height = (int(n) for n in re.search(r"Video: .*?, (\d{2,5})x(\d{2,5})", info).groups())
+    badge_w = max(40, round(width * 0.12))
+    badge = os.path.join(work_dir, "ws_badge.png")
+    ws_badge(badge_w, font_loader).save(badge)
+    margin_x, margin_y = max(2, round(width * 0.005)), max(3, round(height * 0.005))
+    subprocess.run([ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-y", "-i", source, "-i", badge,
+                    "-filter_complex", f"[0:v][1:v]overlay=W-w-{margin_x}:H-h-{margin_y},format=yuv420p[v]",
+                    "-map", "[v]", "-map", "0:a?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                    "-c:a", "copy", target], check=True, capture_output=True)
+    os.remove(badge)
+    return target
 
 
 def expression_for(sentence, index=0):
@@ -371,7 +461,9 @@ def render_host(voice_path, sentences, duration, frame_size, out_path, entrance=
     import subprocess
     width, height = frame_size
     portrait = height > width
-    hero_h = round(height * (0.24 if portrait else 0.36))
+    # Full-body art needs more height than the half-body drawing for her face to read
+    full_body = has_art()
+    hero_h = round(height * ((0.3 if portrait else 0.55) if full_body else (0.24 if portrait else 0.36)))
     sprites = sprite_set(hero_h)
     sw, sh = sprites[("happy", False)].size
     bob = max(4, hero_h // 60)

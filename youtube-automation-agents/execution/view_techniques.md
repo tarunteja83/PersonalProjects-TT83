@@ -37,7 +37,7 @@ other people's videos; it breaks YouTube's policies and can get a channel remove
 | Learn from results [S1] | Agent 8, Analyst | Records every uploaded video's views. Each channel's search phrases are ordered by the views their videos got after 48 hours (phrases not tried for 3 days are tried again first), and a daily Telegram report shows what works. |
 | Retention and title rules [S1] | ACTIVE RULES above | Sent to Gemini with every script and title. |
 | Real, current footage [S2] | Agent 2, Footage | Frontline (`footage_style: "real"`) shows real footage of the actual people, places and events from Wikimedia Commons (public domain, CC0, CC BY only), shown whole in Shorts. |
-| Picture matches the words [S2] | Agent 2, Footage | Stock clips are only used if their tags match the scene's words; otherwise the backup term is tried. |
+| Picture matches the words [S2] | Agent 2, Footage | Stock clips are only used if their tags match the scene's subject (not just "cartoon"); kids scenes with no matching video get a matching cartoon illustration; otherwise the backup term is tried. |
 | Faster cuts [S2] | BRAIN.md `footage` | About 6 clips per Short (was 3) and a new clip about every 8 seconds in long videos (was 15). |
 | A human-sounding voice [S2] | Agent 3, `expressive_voice.py` | Each sentence gets its own pitch, speed and volume (`voice_expression`: lively for kids, measured for news). |
 | Fun, hooky kids stories [S2] | BRAIN.md Agent 3 instructions | Named heroes with a funny trait, a silly problem, three escalating tries, a twist; sound words; the viewer is asked something every 20 to 30 seconds. |

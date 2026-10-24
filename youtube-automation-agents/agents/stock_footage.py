@@ -33,6 +33,10 @@ REAL_SUFFIX = "_real.mp4"
 SHOT_WORDS = {"the", "and", "with", "speech", "address", "remarks", "footage", "video", "clip", "scene", "shot",
               "close", "closeup", "view", "aerial", "live", "news", "of", "in", "at", "on", "for"}
 PIXABAY_URL = "https://pixabay.com/api/videos/"
+PIXABAY_IMAGES_URL = "https://pixabay.com/api/"
+# Words that describe the look of a clip, not what is in it; they don't make a clip match a scene
+STYLE_WORDS = {"cartoon", "cartoons", "animated", "animation", "funny", "cute", "happy", "silly", "colorful",
+               "colourful", "kids", "kid", "children", "magical", "fun", "playful", "little", "illustration"}
 MAX_DOWNLOAD_BYTES = 80 * 1024 * 1024
 # The ideal clip height for each output shape: Shorts are 1080x1920, long videos 1920x1080
 TARGET_HEIGHT = {"portrait": 1920, "landscape": 1080}
@@ -271,10 +275,15 @@ def photo_clip(url, target, seconds, orientation="landscape"):
     """Turn a photo into a moving shot lasting `seconds`: the whole photo (faces are never cropped) on a blurred copy
     of itself, in the video's shape, slowly zooming in (the Ken Burns effect)."""
     image_path = target + ".img"
-    with requests.get(url, headers=COMMONS_HEADERS, timeout=60) as response:
-        response.raise_for_status()
-        with open(image_path, "wb") as f:
-            f.write(response.content)
+    for wait in (3, 6, 10, None):
+        response = requests.get(url, headers=COMMONS_HEADERS, timeout=60)
+        # Image servers (Pixabay's especially) refuse quick bursts for a few seconds: wait and try again
+        if response.status_code != 429 or wait is None:
+            break
+        time.sleep(wait)
+    response.raise_for_status()
+    with open(image_path, "wb") as f:
+        f.write(response.content)
     frames = max(int(seconds * 30), 30)
     exe = shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe()
     try:
@@ -399,6 +408,26 @@ def fetch_scene_clips(provider, api_key, terms, destination_dir, prefix, kids=Fa
                         print(f"[Stock footage] Scene {index + 1}: '{term}' -> {PROVIDERS[provider]['name']} "
                               f"video {clip_id}")
                         break
+                if not path and provider == "pixabay" and style in ("animation", "mixed"):
+                    # No video really shows it: a matching cartoon drawing, gently zooming, before trying the
+                    # next (more generic) term
+                    key = ("illustration", term)
+                    if key not in cache:
+                        cache[key] = with_retries(lambda: pixabay_illustrations(api_key, term, kids))
+                    seconds = lengths[index] + 1 if lengths and index < len(lengths) else 8
+                    target = os.path.join(destination_dir, f"{prefix}_scene{index + 1:03d}.mp4")
+                    # Pixabay's image server sometimes refuses one picture for a while: try a few matching ones
+                    for image_id, url, credit in [c for c in cache[key] if c[0] not in used_ids][:4]:
+                        used_ids.add(image_id)
+                        try:
+                            photo_clip(url, target, min(max(seconds, 3), 30), orientation)
+                        except (requests.RequestException, subprocess.SubprocessError):
+                            continue
+                        path, chosen = target, term
+                        credits.append(("Pixabay", credit))
+                        print(f"[Stock footage] Scene {index + 1}: '{term}' -> Pixabay cartoon illustration "
+                              f"{image_id[3:]}")
+                        break
                 if path:
                     break
         except requests.RequestException as e:
@@ -463,12 +492,29 @@ def pick_rendition(renditions, orientation="portrait"):
 
 
 def tags_match(tags, term):
-    """True if a clip's tags share a word with the search term (allowing plurals and word endings)."""
+    """True if a clip's tags share a SUBJECT word with the search term (allowing plurals and word endings).
+
+    Style words ("cartoon", "funny", "cute"...) don't count: a clip tagged only "cartoon" doesn't show a
+    "cartoon turtle". They are used only when the term has nothing else.
+    """
     words = key_words(term)
     if not words:
         return True
+    subjects = [w for w in words if w not in STYLE_WORDS] or words
     tag_words = re.findall(r"[a-z0-9]+", tags.lower())
-    return any(t[:5] == w[:5] if min(len(t), len(w)) >= 5 else t == w for w in words for t in tag_words)
+    return any(t[:5] == w[:5] if min(len(t), len(w)) >= 5 else t == w for w in subjects for t in tag_words)
+
+
+def pixabay_illustrations(api_key, term, kids):
+    """[(id, image url, artist)] of Pixabay cartoon illustrations whose tags match the term's subject."""
+    pace()
+    params = {"key": api_key, "q": term[:100], "image_type": "illustration", "per_page": 30, "order": "popular",
+              "safesearch": "true" if kids else "false"}
+    response = requests.get(PIXABAY_IMAGES_URL, params=params, timeout=30)
+    response.raise_for_status()
+    return [(f"img{h['id']}", h.get("largeImageURL") or h["webformatURL"], h.get("user", "Pixabay"))
+            for h in response.json().get("hits", [])
+            if tags_match(h.get("tags", ""), term) and (h.get("imageWidth") or 0) >= 1000]
 
 
 def pixabay_candidates(api_key, term, kids, video_type, orientation):

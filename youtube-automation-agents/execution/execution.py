@@ -699,7 +699,9 @@ def import_hero_art(config, folder):
             if megabytes > 50:
                 print(f"Skipped {name}: {megabytes:.0f} MB is too big; export it under 20 MB.")
                 continue
-            shutil.copy(source, os.path.join(mascot.ART_DIR, name))
+            # A "WS" badge covers the image AI's logo in the corner
+            from agents.agent_4_editor import load_font
+            mascot.cover_corner_logo(source, os.path.join(mascot.ART_DIR, name), load_font, mascot.ART_DIR)
             imported.append(name)
     if not imported:
         print("Nothing to import. Pictures are named after poses (" + ", ".join(mascot.ART_NAMES) +

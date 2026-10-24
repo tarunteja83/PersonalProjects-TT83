@@ -59,7 +59,8 @@ If the face or outfit drifts, ask again with "keep her face exactly like the ref
 
 ## How Claude imports them
 
-`python execution/execution.py --hero-art "<folder>"` cuts out the backgrounds (or keeps transparent ones), crops
-and resizes the pictures into this folder and saves a preview sheet; the MP4 files are copied here as they are.
+`python execution/execution.py --hero-art "<folder>"` cuts out the backgrounds (or keeps transparent ones), drops
+an image AI's corner logo and any magenta fringe, crops and resizes the pictures into this folder and saves a
+preview sheet; the MP4 files get a small "WS" badge over the image AI's logo in the bottom-right corner.
 Missing pictures are fine: a missing expression borrows the closest one, and without a mouth-open picture she gives
 a small "talking" pulse instead.

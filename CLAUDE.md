@@ -23,12 +23,17 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
   `--authorize KEY`, `--format short|long|both`, `--dry-run`.
 - **Config:**
   - `execution/channels.yaml`: identity (name, `channel_url`, made_for_kids, watermark, category).
-  - `execution/questions.yaml`: Q1 to Q24 per channel, with options written as comments.
+  - `execution/questions.yaml`: Q1 to Q24 per channel (plus `short_post_times`, `voice_expression`), with
+    options written as comments.
+  - `execution/view_techniques.md`: what gets views; its ACTIVE RULES go to the AI with every video.
   - `BRAIN.md`: global rules. Everything after `## AGENT INSTRUCTIONS` is sent to Gemini, so put human notes above it.
-- **Run order:** long videos first, then Shorts. Per format: scout (trending topic via the YouTube API), then
-  script + voice (Gemini, then edge-tts with sentence timings, a length check and ~15 s scenes), then footage (one
-  Pixabay clip per scene from Gemini's per-scene terms), then the FFmpeg editor, then the publisher (channel check,
-  resumable chunked upload, `publishAt`). Then cleanup and a Telegram alert.
+- **Run order:** a Telegram start message, then per channel long videos first, then Shorts. Per format: scout
+  (rising, same-language trending topic via the YouTube API), then script + voice (Gemini, or Groq as backup, writes
+  script + title + hashtags + footage terms; expressive edge-tts with sentence timings; ~6 scenes per Short, ~8 s
+  scenes in long videos), then footage (Frontline: real Commons video/photo first; kids: matching cartoon/real
+  Pixabay clip or cartoon illustration), then the FFmpeg editor (kids: WonderSprout host, intro, outro), then the
+  publisher (channel check, resumable chunked upload, `publishAt`). Then cleanup, a Telegram message per channel,
+  and the Analyst (views, phrase scores, daily report).
 - **Manifest:** `GDrive_Mount/YouTube_Automation/01_manifests/trends.json`. Status flow: discovered, voiced,
   ready_to_edit, edited, published (also expired, download_failed).
 - **GitHub runs:** use temporary folders. Logins and the manifest sync via rclone to Google Drive
@@ -47,8 +52,9 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
   (lively) for WonderSprout. Supported languages: English, Hindi, Telugu.
 - **Audio and branding:** no original audio (`original_audio_volume: 0`), a name-only LIKE then SUBSCRIBE end card
   (`show_logo: false`), and a watermark.
-- **WonderSprout content:** entertainment plus education. Original funny stories (no copyrighted characters) and
-  `footage_style: "mixed"` (Pixabay animation alternating with real footage).
+- **WonderSprout content:** entertainment plus education. Original funny stories (no copyrighted characters),
+  narrated by the WonderSprout superhero host, and `footage_style: "mixed"` (Pixabay animation alternating with
+  real footage, cartoon illustrations when no clip matches).
 - **Rendering:** FFmpeg does the rendering for stock videos (MoviePy per-frame was 30+ min for a long video).
   MoviePy remains only for `footage.source: "youtube"`.
 - **Upload safety:** `channels.yaml` `channel_url` is checked against the logged-in channel before saving a login and
@@ -66,7 +72,8 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
 - **GitHub schedule delay:** scheduled runs started 4 to 5 hours after the cron time, so the cron is shifted earlier
   (see above). Passed go-live slots go live soon after upload; the Telegram start message shows how early or late.
 - **Telegram:** each run sends a start message, then one message per channel (videos, links, go-live times, hashtags).
-- **Hashtags:** Gemini's topic hashtags plus the trending source video's own, up to 8, also used as search tags.
+- **Hashtags:** up to 12: two currently trending niche hashtags and the top topic hashtag first, then #shorts, the
+  AI's topic hashtags, more trending ones and the source video's; also used as search tags (details below).
 - **Views (from `execution/view_techniques.md`, source S1 "Why Your Views STOP After 48 Hours"):** ACTIVE RULES
   (trend first, stay in niche, retention, honest click-worthy titles) are appended to the Gemini instructions by
   `brain.view_rules()`. The Scout ranks sources by views per hour and skips other-language sources (other scripts,
@@ -81,7 +88,11 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
     fetched with FFmpeg over HTTP; a used video is reused from a later moment; credits (author, licence,
     `commons.wikimedia.org/?curid=`) go in the description. Real clips are named `*_real.mp4`; the editor shows them
     whole on a blurred copy in Shorts. Copyrighted news-agency footage is deliberately not used.
-  - Pixabay clips must have a tag matching the term (`tags_match`), which fixed scenery that didn't match the words.
+  - Pixabay clips must have a tag matching the term's subject (`tags_match` ignores STYLE_WORDS such as cartoon,
+    funny, cute: owner saw random stars/bubbles clips in kids videos). Kids styles (animation/mixed) fall back to
+    a matching Pixabay cartoon illustration (`pixabay_illustrations` + `photo_clip`, up to 4 tried: Pixabay's
+    image server refuses bursts with 429). The owner decided against AI-drawn scenes (2026-10-24): use web cartoon
+    images played with a slow zoom instead.
   - Faster cuts: `clips_per_video: 6`, `long_scene_seconds: 8` (BRAIN.md `footage`).
   - Expressive voice: `agents/expressive_voice.py` narrates sentence by sentence with per-kind pitch/rate/volume
     (`voice_expression`: lively kids, measured news, off). Samples are in Google Drive `YouTube_Auto/voice_samples`;
@@ -102,6 +113,11 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
     `YouTube_Auto/wondersprout_assets/` (spec `WHAT_TO_PROVIDE.md` = assets/wondersprout/PROMPTS.md). Import with
     `--hero-art`, then commit assets/wondersprout. `VideoEditorAgent.custom_hero_clip` uses intro.mp4/outro.mp4
     (and *_short.mp4) when present, fitted on blur, silence added if they have no sound.
+    Imported 2026-10-24: the owner's 9 poses (3D-animated, made with Grok, transparent PNG with a "Grok" logo
+    and magenta fringe) and intro/outro (474x642, 7.6 s, with sound, "Grok" logo bottom-right). `clean_cutout`
+    keeps only her shape (flood fill; drops the logo) and despills the magenta edge; `cover_corner_logo` puts a
+    "WS" badge over the videos' logo (owner asked to remove or cover it). Note: Pillow 13 images made with
+    Image.fromarray can be read-only, so floodfill needs `.copy()`.
   - Trending hashtags: the Scout counts hashtags of the ~15 fastest-rising same-language videos per search
     (`trending_hashtags`, generic and channel tags removed); the publisher puts 2 of them + the top topic tag first,
     up to 12 in total.
@@ -156,26 +172,35 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
      tasks go under "Not automated yet". Mark the entry "reviewed" with a → verdict per technique.
   4. Then the usual checks (--check, setup_project.py, 3.11 syntax, tests) and tell the owner what changed.
 
-## Status and open items (as of 2026-10-21)
-- **Shipped (commit f0f8d7e on `main`, branch `three-daily-runs-telegram-hashtags`):** three runs a day for both
-  channels, the cron lead, Telegram start and per-channel messages, merged Gemini calls, title fallback and hashtags.
+## Status and open items (as of 2026-10-24)
+- **Shipped on `main`** (newest first): WonderSprout's real character, intro/outro and stricter footage matching
+  (this commit); `8fba579` WonderSprout host, Frontline real photos, lazy YouTube searches; `b0e5164` real footage,
+  expressive voices (Ava, Brian), faster cuts, trending hashtags, kids 3 long + 2 Shorts; `e426569` view techniques,
+  Analyst, `--learn`, Groq backup; `0736318` / `f0f8d7e` three runs a day, Telegram, title fallback.
 - **Run history:**
   - 18 to 20 Oct: scheduled runs succeeded, starting 4h22m to 5h28m after their cron times.
-  - 20 Oct (kids) and 21 Oct (Frontline): failed with 0 uploaded. Gemini returned 429 on every model mid-run, and
-    titles couldn't be written (the kids run had already uploaded its 2 long videos).
-  - 21 Oct 14:56 IST, manual run 39576955716 on f0f8d7e: success, 5 of 6 uploaded in 13 min. Passed slots went live
-    about 15 min after upload; the title fallback was used once (Gemini still 429). One kids Short failed with
-    YouTube's "exceeded the number of videos they may upload" (the channel's own daily limit).
-  - First scheduled run on the new schedule: the 06:00 run on 22 Oct (cron 20:05 UTC = 01:35 IST). Not yet checked.
+  - 20 and 21 Oct: two runs uploaded nothing (Gemini 429 on every model); fixed by the title fallback, fewer Gemini
+    requests and the Groq backup.
+  - 21 Oct 14:56 IST manual run 39576955716: 5 of 6 uploaded; one kids Short hit YouTube's per-channel upload limit.
+  - 22 Oct morning run (started 04:32 IST, ~3 h after its cron): Frontline 3 of 3, WonderSprout 1 of 3 (Gemini
+    quota; the reason for the Groq backup and the yellow warning).
+  - 24 Oct GitHub test run 40071143012 (test run, no uploads): real Commons footage and the new voices worked on
+    GitHub; the kids Short failed because local testing had used up the day's 100 YouTube searches (since fixed).
+    Its 3 finished test videos are "edited" in the Drive manifest and will be uploaded by the next real runs.
+  - The WonderSprout host, Frontline photos and stricter matching were verified locally only; not yet seen in a
+    GitHub run.
 - **Open items:**
-  - Ask the owner for the next days' Telegram messages or Actions results: check that runs start near
-    06:00/13:00/17:00 (tune `github_schedule_lead_minutes` if not) and that all 16 videos upload.
+  - Ask the owner for Telegram messages / Actions results from the next runs: check the WonderSprout character,
+    intro and outro, real photos on Frontline, start times near 06:00/13:00/17:00 (tune
+    `github_schedule_lead_minutes`), and that all 13 videos upload.
+  - The owner's intro/outro are 474x642 (tall); in long videos they show on a blurred background. Suggested
+    re-exporting them at 1920x1080.
   - YouTube daily upload limit: the owner was advised to phone-verify both channels at youtube.com/verify.
-  - Leftover finished videos from the failed runs are uploaded first by the next runs (Frontline had 1 long + 4
-    Shorts waiting). A test Short made on the laptop is "edited" in the local manifest and will upload on a local run.
-  - The owner's Gmail is public as the author of every commit; they were told about GitHub's "Keep my email addresses
-    private" setting. History was not rewritten.
-- **Optional clean-up:** some early test videos on YouTube are unlisted (a few have old audio or the 11-minute kids
-  video); the owner was advised to delete or publish them in Studio.
-- **Possible future work:** more channels (add to both YAML files and run `--authorize`; about 3 channels fit the
-  YouTube search limit on this schedule), and tuning scene-matching quality from sync reports.
+  - Views were near zero on 22 Oct; the owner was asked to check YouTube Studio → Analytics → Reach (impressions).
+  - The owner's Gmail is public as the author of every commit; they were told about GitHub's "Keep my email
+    addresses private" setting. History was not rewritten.
+- **Optional clean-up:** some early test videos on YouTube are unlisted; the owner was advised to delete or publish
+  them in Studio. Laptop test videos are "edited" in the local manifest only (they upload only on a laptop run).
+- **Possible future work:** more channels (add to both YAML files and run `--authorize`; with ~1 search per video
+  the YouTube search limit allows many more channels), YouTube Analytics scope for retention/CTR in the Analyst,
+  and tuning scene matching from the sync reports.
