@@ -28,9 +28,10 @@ DEFAULT_VOICES = {
     ("Telugu", True): "te-IN-ShrutiNeural",
 }
 SPEEDS = ["-15%", "-5%", "+0%", "+10%"]
+VOICE_EXPRESSIONS = ["lively", "measured", "off"]
 VIDEO_LENGTHS = [15, 30, 45, 60]
 VISIBILITIES = ["public", "unlisted", "private"]
-FOOTAGE_STYLES = ["any", "animation", "film", "mixed"]
+FOOTAGE_STYLES = ["any", "animation", "film", "mixed", "real"]
 LONG_MINUTES = [4, 5, 6, 7, "4-5", "4-6", "5-6", "5-7", "6-7"]
 MAX_LONG_VIDEOS_PER_DAY = 4
 MAX_VIDEOS_PER_DAY = 50
@@ -146,6 +147,8 @@ def build_profile(channel, answers):
         "language": language,
         "voice": a.get("voice") or DEFAULT_VOICES[(language, kids)],
         "voice_rate": a.get("voice_speed") or ("-15%" if kids else "-5%"),
+        # Sentence-by-sentence pitch, speed and volume (agents/expressive_voice.py)
+        "voice_expression": a.get("voice_expression") or ("lively" if kids else "measured"),
         "tone": a.get("tone") or ("Enthusiastic, warm, curious storyteller for young children." if kids
                                   else "Clear, engaging and informative."),
         "target_duration_seconds": int(a.get("video_length_seconds") or 30),
@@ -245,7 +248,7 @@ def validate_answers(answers, channels):
             elif language in LANGUAGES and not str(voice).startswith(LANGUAGES[language]):
                 problems.append(f"{where}: voice '{voice}' does not speak {language}; pick a {LANGUAGES[language]}... voice")
         checks = [
-            ("voice_speed", SPEEDS), ("video_length_seconds", VIDEO_LENGTHS),
+            ("voice_speed", SPEEDS), ("voice_expression", VOICE_EXPRESSIONS), ("video_length_seconds", VIDEO_LENGTHS),
             ("post_frequency", list(FREQUENCIES)), ("visibility", VISIBILITIES), ("footage_style", FOOTAGE_STYLES),
         ]
         for field, allowed in checks:

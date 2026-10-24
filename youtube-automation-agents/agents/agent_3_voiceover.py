@@ -5,6 +5,7 @@ import asyncio
 import edge_tts
 from google import genai
 
+from agents import expressive_voice
 from agents.ai import generate_text
 from agents.stock_footage import TERM_PAIR_RULE, footage_rules, parse_scene_hints
 from brain import item_matches
@@ -15,8 +16,9 @@ WORDS_PER_SECOND = 2.5
 LENGTH_TOLERANCE = 1.2
 # Narration longer than the video's maximum length (times this factor) is shortened and narrated again
 DURATION_TOLERANCE = 1.0
-# Stock footage changes scene about this often in long videos; Shorts use footage.clips_per_video scenes
-LONG_SCENE_SECONDS = 15
+# Stock footage changes scene about this often in long videos (footage.long_scene_seconds in BRAIN.md);
+# Shorts use footage.clips_per_video scenes
+LONG_SCENE_SECONDS = 8
 
 
 def stock_mode(config, profile):
@@ -148,7 +150,7 @@ class VoiceoverAgent:
         )
         if not long:
             # A Short has a few equal scenes, so footage for each is chosen here instead of in a second request
-            clips = int((self.config.get("footage") or {}).get("clips_per_video", 3))
+            clips = int((self.config.get("footage") or {}).get("clips_per_video", 6))
             prompt += (
                 f"SCENES: split the narration into {clips} equal parts in order and, for each part, give "
                 + TERM_PAIR_RULE + footage_rules(self.profile)
@@ -185,7 +187,16 @@ class VoiceoverAgent:
     def synthesize_voice(self, script_text, video_id):
         """Narrate the script; returns (mp3 path, spoken seconds, [(sentence start seconds, sentence text)])."""
         out_mp3 = os.path.join(self.paths["audio_renders"], f"vo_{self.active_key}_{video_id}.mp3")
-        print(f"[Agent 3: Voiceover] Narrating video {video_id} with {self.voice} ({self.voice_rate})...")
+        expression = self.profile.get("voice_expression", "off")
+        print(f"[Agent 3: Voiceover] Narrating video {video_id} with {self.voice} ({self.voice_rate}, "
+              f"{expression} expression)...")
+        if expression != "off":
+            try:
+                seconds, sentences = expressive_voice.narrate(script_text, self.voice, self.voice_rate, expression,
+                                                              out_mp3)
+                return out_mp3, seconds + 0.3, sentences
+            except Exception as e:
+                print(f"[Agent 3: Voiceover] Expressive narration failed ({e}); narrating in one pass instead.")
 
         async def narrate():
             communicate = edge_tts.Communicate(script_text, self.voice, rate=self.voice_rate,
@@ -230,7 +241,7 @@ class VoiceoverAgent:
         # re-used trending videos are scripted after their download
         stock = stock_mode(self.config, self.profile)
         wanted_status = "discovered" if stock else "downloaded"
-        scene_seconds = LONG_SCENE_SECONDS
+        scene_seconds = float((self.config.get("footage") or {}).get("long_scene_seconds", LONG_SCENE_SECONDS))
 
         for item in trends:
             if item["status"] == wanted_status and item_matches(item, self.active_key, self.profile):
@@ -243,7 +254,7 @@ class VoiceoverAgent:
                     item["voice_seconds"] = round(seconds, 2)
                     if stock:
                         if item.get("format") != "long":
-                            scene_seconds = seconds / int((self.config.get("footage") or {}).get("clips_per_video", 3))
+                            scene_seconds = seconds / int((self.config.get("footage") or {}).get("clips_per_video", 6))
                         item["scenes"] = group_scenes(sentences, seconds, scene_seconds)
                         print(f"[Agent 3: Voiceover] {seconds / 60:.1f} min of narration in {len(item['scenes'])} scenes")
                     item["status"] = "voiced"

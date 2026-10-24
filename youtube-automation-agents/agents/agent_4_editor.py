@@ -11,6 +11,7 @@ from moviepy.editor import (VideoFileClip, AudioFileClip, ImageClip, CompositeVi
                             concatenate_videoclips)
 
 from agents.branding import channel_logo
+from agents.stock_footage import REAL_SUFFIX
 from brain import item_matches
 
 SHORT_SIZE, LONG_SIZE = (1080, 1920), (1920, 1080)
@@ -183,6 +184,11 @@ class VideoEditorAgent:
             lengths = [duration / len(clips)] * len(clips)
         fit = (f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},"
                f"setsar=1,fps=30,format=yuv420p")
+        # Real footage (people at a table, a podium, a ship) is shown whole in a vertical Short, centred on a
+        # blurred copy of itself, instead of cropping away everything but the middle
+        whole = (f"split[a][b];[a]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},"
+                 f"boxblur=20:2[bg];[b]scale={width}:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,"
+                 f"setsar=1,fps=30,format=yuv420p")
 
         work = tempfile.mkdtemp(prefix="render_", dir=self.paths["processed_videos"])
         try:
@@ -190,7 +196,8 @@ class VideoEditorAgent:
             for index, clip in enumerate(clips):
                 part = os.path.join(work, f"part{index:03d}.mp4")
                 # -stream_loop repeats clips shorter than their share
-                ffmpeg("-stream_loop", "-1", "-i", clip, "-t", f"{lengths[index]:.3f}", "-an", "-vf", fit,
+                shape = whole if clip.endswith(REAL_SUFFIX) and height > width else fit
+                ffmpeg("-stream_loop", "-1", "-i", clip, "-t", f"{lengths[index]:.3f}", "-an", "-vf", shape,
                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", part)
                 parts.append(part)
             with open(os.path.join(work, "parts.txt"), "w", encoding="utf-8") as f:

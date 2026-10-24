@@ -25,6 +25,38 @@ OTHER_LANGUAGES = {"hindi", "telugu", "tamil", "bengali", "bangla", "urdu", "mal
                    "gujarati", "punjabi", "odia", "arabic", "indonesian", "spanish", "portuguese"}
 
 
+# Hashtags that say nothing about the topic; YouTube treats piles of them as spam
+GENERIC_HASHTAGS = {"#shorts", "#short", "#viral", "#trending", "#trend", "#youtube", "#youtubeshorts", "#ytshorts",
+                    "#fyp", "#foryou", "#foryoupage", "#explore", "#explorepage", "#viralvideo", "#viralshorts",
+                    "#reels", "#subscribe", "#like", "#shortsfeed", "#shortvideo", "#shortsvideo", "#new", "#video",
+                    "#usashorts", "#viralshort", "#trendingshorts", "#feed", "#reel"}
+TRENDING_POOL = 15
+TRENDING_KEEP = 8
+
+
+def trending_hashtags(videos, now=None):
+    """The hashtags the fastest-rising videos on a search use, weighted by their views per hour.
+
+    videos: [(video details from videos.list, views per hour)] of same-language sources. Generic tags, other
+    channels' names and tags not written in Latin letters are left out.
+    """
+    weights, spelling = {}, {}
+    for video, speed in sorted(videos, key=lambda v: -v[1])[:TRENDING_POOL]:
+        snippet = video["snippet"]
+        brand = re.sub(r"\W", "", snippet.get("channelTitle", "").lower())
+        seen = set()
+        for tag in re.findall(r"#\w+", f"{snippet.get('title', '')} {snippet.get('description', '')}"):
+            key = tag.lower()
+            other_script = not all(is_latin(c) for c in tag[1:] if c.isalpha())
+            if (key in seen or key in GENERIC_HASHTAGS or len(key) < 4 or other_script
+                    or (brand and (brand in key or key.lstrip("#") in brand))):
+                continue
+            seen.add(key)
+            weights[key] = weights.get(key, 0) + 1 + speed
+            spelling.setdefault(key, tag)
+    return [spelling[k] for k in sorted(weights, key=lambda k: -weights[k])[:TRENDING_KEEP]]
+
+
 def is_latin(char):
     """Latin letters, including accented ones and the 'bold' or 'italic' maths letters used in fancy titles."""
     return ord(char) < 0x250 or unicodedata.name(char, "").startswith("MATHEMATICAL")
@@ -107,7 +139,7 @@ class TrendScoutAgent:
             response = self.youtube.videos().list(part="snippet,statistics", id=",".join(ids[start:start + 50])).execute()
             details.update({v["id"]: v for v in response.get("items", [])})
         language = self.profile.get("language", "English")
-        ranked = []
+        ranked, pool = [], []
         for item in items:
             video = details.get(item["id"]["videoId"])
             if not video:
@@ -115,6 +147,11 @@ class TrendScoutAgent:
             item["views_per_hour"] = round(views_per_hour(video), 1)
             item["language_ok"] = language_matches(video, language) is not False
             ranked.append(item)
+            if item["language_ok"]:
+                pool.append((video, item["views_per_hour"]))
+        tags = trending_hashtags(pool)
+        for item in ranked:
+            item["trending_hashtags"] = tags
         return sorted(ranked, key=lambda i: (not i["language_ok"], -i["views_per_hour"]))
 
     def run(self, limit=None):
@@ -204,6 +241,8 @@ class TrendScoutAgent:
             "max_seconds": max_seconds,
             "genre": query,
             "source_views_per_hour": item.get("views_per_hour"),
+            # What the fastest-rising videos on this search are tagged with right now
+            "trending_hashtags": item.get("trending_hashtags") or [],
             # The search API returns HTML-escaped text (e.g. &#39; and &amp;)
             "original_title": html.unescape(item["snippet"]["title"]),
             "original_description": html.unescape(item["snippet"]["description"]),

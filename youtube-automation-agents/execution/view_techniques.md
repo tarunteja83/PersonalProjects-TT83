@@ -36,6 +36,12 @@ other people's videos; it breaks YouTube's policies and can get a channel remove
 | Consistency [S1] | Schedule | Fixed daily go-live times in `questions.yaml`; finished videos that miss their run are uploaded in the next one. |
 | Learn from results [S1] | Agent 8, Analyst | Records every uploaded video's views. Each channel's search phrases are ordered by the views their videos got after 48 hours (phrases not tried for 3 days are tried again first), and a daily Telegram report shows what works. |
 | Retention and title rules [S1] | ACTIVE RULES above | Sent to Gemini with every script and title. |
+| Real, current footage [S2] | Agent 2, Footage | Frontline (`footage_style: "real"`) shows real footage of the actual people, places and events from Wikimedia Commons (public domain, CC0, CC BY only), shown whole in Shorts. |
+| Picture matches the words [S2] | Agent 2, Footage | Stock clips are only used if their tags match the scene's words; otherwise the backup term is tried. |
+| Faster cuts [S2] | BRAIN.md `footage` | About 6 clips per Short (was 3) and a new clip about every 8 seconds in long videos (was 15). |
+| A human-sounding voice [S2] | Agent 3, `expressive_voice.py` | Each sentence gets its own pitch, speed and volume (`voice_expression`: lively for kids, measured for news). |
+| Fun, hooky kids stories [S2] | BRAIN.md Agent 3 instructions | Named heroes with a funny trait, a silly problem, three escalating tries, a twist; sound words; the viewer is asked something every 20 to 30 seconds. |
+| Trending hashtags for reach [S2] | Agents 1 and 5 | The hashtags the fastest-rising niche videos use right now lead each description, followed by the topic's own (up to 12). |
 
 **Not automated yet (owner):**
 - Custom thumbnails strongly affect click-through, but YouTube only allows them on phone-verified channels
@@ -69,3 +75,22 @@ other people's videos; it breaks YouTube's policies and can get a channel remove
 5. **Give it time;** growth often comes after months of steady uploads.
    → Noted for the owner.
 6. Sponsor segments (a clipping tool, a paid community) are adverts, not techniques. → Skipped.
+
+### S2. Owner's feedback from real viewers (2026-10-24)
+- Source: the owner showed the channels to real viewers and reported their feedback; YouTube stats at the time:
+  WonderSprout Shorts weren't engaging, a few WonderSprout long videos reached about 200 views, Frontline had almost
+  no views.
+- Status: reviewed
+
+**What it teaches:**
+1. **Frontline isn't interactive or "real-time":** narration over generic stock scenery doesn't feel like news, and
+   the pictures often didn't match the words.
+   → Adopted: real footage of the actual people and events (Wikimedia Commons), tag-matched stock clips, faster cuts.
+   Copyrighted news-agency footage is not used (Content ID claims, copyright strikes).
+2. **The voice sounds robotic** (one flat tone).
+   → Adopted: sentence-by-sentence expression; voice samples in Google Drive `YouTube_Auto/voice_samples` for the
+   owner to choose more natural voices (Ava, Emma, Andrew, Brian).
+3. **Kids need fun and hooks, and long videos work better than Shorts** on WonderSprout.
+   → Adopted: new kids writing rules; WonderSprout moved to 3 long videos and 2 Shorts a day (was 2 and 6).
+4. **More reach from trending hashtags** in each niche.
+   → Adopted: trending niche hashtags first in every description.

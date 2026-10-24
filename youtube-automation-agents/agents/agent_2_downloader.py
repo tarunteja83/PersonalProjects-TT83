@@ -69,7 +69,7 @@ class DownloaderAgent:
             paths, credits, used_terms = stock_footage.fetch_scene_clips(
                 provider, api_key, terms, self.download_dir, f"stock_{vid_id}",
                 kids=profile.get("made_for_kids", False), style=profile.get("footage_style", "any"),
-                orientation=orientation)
+                orientation=orientation, lengths=[s["end"] - s["start"] for s in scenes])
         except Exception as e:
             print(f"[Agent 2: Downloader] Stock footage failed for {vid_id}: {stock_footage.safe_error(e, api_key)}")
             paths, credits, used_terms = [], [], []
@@ -87,7 +87,14 @@ class DownloaderAgent:
             item["footage_paths"] = filled
             item["scene_terms"] = used_terms
             item["footage_provider"] = provider
-            item["footage_credits"] = sorted(set(credits))
+            item["footage_credits"] = sorted({credit for site, credit in credits if site != stock_footage.COMMONS_SITE})
+            # Credits per site for the description: real footage (with licence and link) and stock footage
+            sources = {}
+            for site, credit in credits:
+                sources.setdefault(site, [])
+                if credit not in sources[site]:
+                    sources[site].append(credit)
+            item["footage_sources"] = sources
             item["raw_video_path"] = filled[0]
             item["status"] = "ready_to_edit"
         else:

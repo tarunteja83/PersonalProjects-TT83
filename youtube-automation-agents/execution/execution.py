@@ -48,8 +48,10 @@ MINUTES_PER_LONG = 12
 GITHUB_FREE_MINUTES = 2000
 
 VOICE_CHOICES = {
-    "English": ["en-US-AndrewNeural", "en-US-ChristopherNeural", "en-US-GuyNeural", "en-US-AriaNeural",
-                "en-US-EmmaNeural", "en-US-AnaNeural", "en-US-JennyNeural", "en-IN-PrabhatNeural", "en-IN-NeerjaNeural"],
+    "English": ["en-US-AvaMultilingualNeural", "en-US-EmmaMultilingualNeural", "en-US-BrianMultilingualNeural",
+                "en-US-AndrewMultilingualNeural", "en-US-AndrewNeural", "en-US-ChristopherNeural", "en-US-GuyNeural",
+                "en-US-AriaNeural", "en-US-EmmaNeural", "en-US-AnaNeural", "en-US-JennyNeural", "en-IN-PrabhatNeural",
+                "en-IN-NeerjaNeural"],
     "Hindi": ["hi-IN-MadhurNeural", "hi-IN-SwaraNeural"],
     "Telugu": ["te-IN-MohanNeural", "te-IN-ShrutiNeural"],
 }

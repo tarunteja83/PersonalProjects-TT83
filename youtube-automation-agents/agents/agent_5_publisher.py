@@ -12,12 +12,15 @@ from googleapiclient.http import MediaFileUpload
 import time
 
 from agents.ai import generate_text
+from agents.agent_1_scout import GENERIC_HASHTAGS
+from agents.stock_footage import COMMONS_SITE
 from brain import YOUTUBE_SCOPES as SCOPES, channel_matches, item_matches
 
 UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 UPLOAD_RETRIES = 5
 PASSED_SLOT_GAP = timedelta(minutes=30)
-MAX_HASHTAGS = 8
+MAX_HASHTAGS = 12
+MAX_DESCRIPTION = 4900
 
 class PublisherAgent:
     def __init__(self, config, instructions):
@@ -121,16 +124,21 @@ class PublisherAgent:
         return new_title, self.finish_description(item, seo_body.strip(), gemini_tags, clean_creator_name)
 
     def hashtags(self, item, gemini_tags):
-        """Topic hashtags from Gemini plus the ones the trending source video uses, without the source's own brand.
+        """Hashtags for reach: what is trending in the niche right now, the video's own topic, and the source's.
 
-        Shorts start with #shorts. YouTube shows the first three above the title and ignores all of them past 60,
-        so at most MAX_HASHTAGS are kept.
+        YouTube shows the first three above the title, so they are the two strongest trending niche tags and the
+        strongest topic tag; then #shorts (Shorts), the other topic tags, the rest of the trending ones and the
+        source video's. Generic tags (#viral, #fyp) and other channels' names are left out; at most MAX_HASHTAGS.
         """
         source_text = f"{item.get('original_title') or ''} {item.get('original_description') or ''}"
         creator = re.sub(r"\W", "", (item.get("original_creator") or "").lower())
-        trending = [t for t in re.findall(r"#\w+", source_text)
-                    if not (creator and (creator in t.lower() or t.lower().lstrip("#") in creator))]
-        tags = (["#shorts"] if item.get("format") != "long" else []) + re.findall(r"#\w+", gemini_tags) + trending
+        source = [t for t in re.findall(r"#\w+", source_text)
+                  if not (creator and (creator in t.lower() or t.lower().lstrip("#") in creator))
+                  and t.lower() not in GENERIC_HASHTAGS]
+        niche = list(item.get("trending_hashtags") or [])
+        topic = re.findall(r"#\w+", gemini_tags)
+        tags = (niche[:2] + topic[:1] + (["#shorts"] if item.get("format") != "long" else [])
+                + topic[1:] + niche[2:] + source)
         if len(tags) <= 1:
             # Nothing from Gemini or the source: fall back to the channel's niche words
             tags += ["#" + w.lower() for w in re.findall(r"[A-Za-z]{4,}", self.profile.get("niche", ""))][:4]
@@ -157,9 +165,27 @@ class PublisherAgent:
     def finish_description(self, item, text, gemini_tags, clean_creator_name):
         tags = self.hashtags(item, gemini_tags)
         item["upload_hashtags"] = tags
-        return "\n\n".join(p for p in (text, " ".join(tags)) if p) + self.credit_block(item, clean_creator_name)
+        credit = self.credit_block(item, clean_creator_name)
+        # YouTube rejects descriptions over 5,000 characters: shorten the AI text, never the credits
+        room = MAX_DESCRIPTION - len(credit) - len(" ".join(tags)) - 4
+        if len(text) > room:
+            text = text[:max(room - 3, 0)].rstrip() + "..."
+        return "\n\n".join(p for p in (text, " ".join(tags)) if p) + credit
 
     def credit_block(self, item, clean_creator_name):
+        sources = item.get("footage_sources")
+        if item.get("footage_paths") and sources:
+            lines = ["", "", "---"]
+            if sources.get(COMMONS_SITE):
+                # CC BY asks for the author, the licence and a link; public domain clips are credited too
+                lines.append("Real footage via Wikimedia Commons (free licences):")
+                lines += [f"- {credit}" for credit in sources[COMMONS_SITE]]
+            for site, names in sources.items():
+                if site != COMMONS_SITE:
+                    link = {"Pixabay": "https://pixabay.com", "Pexels": "https://www.pexels.com"}.get(site, "")
+                    lines.append(f"Stock footage: {site} ({link}), videos by {', '.join(names)}")
+            lines.append(f"Commentary produced by {self.profile['channel_name']}.")
+            return "\n".join(lines)
         if item.get("footage_paths"):
             # Pixabay and Pexels ask that you show where the footage came from
             site = {"pexels": ("Pexels", "https://www.pexels.com")}.get(item.get("footage_provider"),

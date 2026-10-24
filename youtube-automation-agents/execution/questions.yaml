@@ -46,6 +46,10 @@
 #             "en-US-AriaNeural"        female, confident, news
 #             "en-US-EmmaNeural"        female, cheerful, kids and education
 #             "en-US-AnaNeural"         CHILD voice (young girl), best for kids channels
+#             "en-US-AvaMultilingualNeural"   female, expressive, very natural (WonderSprout, chosen 2026-10-24)
+#             "en-US-EmmaMultilingualNeural"  female, cheerful, very natural
+#             "en-US-BrianMultilingualNeural" male, casual, very natural (Frontline, chosen 2026-10-24)
+#             "en-US-AndrewMultilingualNeural" male, warm, very natural
 #             "en-US-JennyNeural"       female, friendly, calm
 #             "en-IN-PrabhatNeural"     male, Indian English
 #             "en-IN-NeerjaNeural"      female, Indian English
@@ -68,8 +72,9 @@ channels:
       - "America US foreign policy news #shorts"
       - "Middle East war update #shorts"
     language: "English"                    # Q5. Narration language                Options: "English" | "Hindi" | "Telugu"
-    voice: "en-US-ChristopherNeural"       # Q6. Narrator voice                    Options: see VOICE OPTIONS above (must match the language)
+    voice: "en-US-BrianMultilingualNeural"       # Q6. Narrator voice                    Options: see VOICE OPTIONS above (must match the language)
     voice_speed: "-5%"                     # Q7. Speaking speed                    Options: "-15%" slow & very clear | "-5%" clear (recommended) | "+0%" natural | "+10%" brisk
+    voice_expression: "measured"           # Q7b. How lively the voice is        Options: "lively" (big highs and lows) | "measured" (subtle emphasis, news) | "off" (one even tone)
     tone: "Serious, objective, analytical intelligence briefing."
                                            # Q8. Narration style (any text)
     video_length_seconds: 30               # Q9. Length of each video              Options: 15 | 30 | 45 | 60
@@ -87,7 +92,7 @@ channels:
     visibility: "public"                   # Q18. Who can see the videos           Options: "public" | "unlisted" | "private"
     test_run: false                        # Q19. Make videos without uploading    Options: true | false
     exclude_sources: []                    # Q20. YouTube channels never to take videos from   Options: [] | ["Channel Name 1", "Channel Name 2"]
-    footage_style: "film"                  # Q21. Kind of stock clips used          Options: "any" | "animation" (cartoon) | "film" (real footage) | "mixed" (alternate)
+    footage_style: "real"                  # Q21. Kind of clips   Options: "any" | "animation" (cartoon) | "film" (real-life stock) | "mixed" (alternate) | "real" (real footage of the actual people and events first, then stock)
     long_videos_per_day: 2                 # Q22. Long landscape videos per day (all runs together)   Options: 0 (none) to 4
     long_video_minutes: "5-7"              # Q23. Length of each long video         Options: 4 | 5 | 6 | 7 | "4-5" | "4-6" | "5-6" | "5-7" | "6-7" (a range varies each video; never longer than its upper number)
     long_post_times: ["12:00", "16:30"]    # Q24. When each long video goes live    Options: one "HH:MM" per long video, e.g. ["12:00", "20:00"]
@@ -102,14 +107,15 @@ channels:
       - "fun science facts kids #shorts"
       - "silly animals cartoon for kids #shorts"
     language: "English"                    # Q5.  Options: "English" | "Hindi" | "Telugu"
-    voice: "en-US-AnaNeural"               # Q6.  Options: see VOICE OPTIONS above
+    voice: "en-US-AvaMultilingualNeural"        # Q6.  Options: see VOICE OPTIONS above
     voice_speed: "-5%"                     # Q7.  Options: "-15%" | "-5%" | "+0%" | "+10%"
+    voice_expression: "lively"             # Q7b. Options: "lively" | "measured" | "off"
     tone: "A cheerful, excited kid talking to other kids: playful and funny, tells silly short stories or amazing facts, short punchy sentences, lots of 'Whoa!' and 'Guess what?'"
     video_length_seconds: 30               # Q9.  Options: 15 | 30 | 45 | 60
     avoid_words: []                        # Q10. Options: [] | ["word1", "word2"]
     lookback_days: 5                       # Q11. Options: 1 to 30
     fetch_time: ["06:00", "13:00", "17:00"]  # Q12. Options: "HH:MM" | ["HH:MM", ...]
-    short_post_times: ["08:30", "10:30", "14:30", "16:00", "18:00", "19:00"]
+    short_post_times: ["09:00", "14:30"]   # 1 Short in the morning run, 1 in the afternoon run
                                            # Q13. Options: list of "HH:MM", one per Short
     days: "daily"                          # Q16. Options: "daily" | "weekdays" | "weekends" | [mon, wed, fri]
     timezone: "Asia/Kolkata"               # Q17
@@ -117,9 +123,9 @@ channels:
     test_run: false                        # Q19. Options: true | false
     exclude_sources: []                    # Q20. Options: [] | ["Channel Name 1", "Channel Name 2"]
     footage_style: "mixed"                 # Q21. Options: "any" | "animation" | "film" | "mixed" (cartoon and real clips alternate)
-    long_videos_per_day: 2                 # Q22. Options: 0 (none) to 4
+    long_videos_per_day: 3                 # Q22. Options: 0 (none) to 4
     long_video_minutes: "4-6"              # Q23. Options: 4 | 5 | 6 | 7 | "4-5" | "4-6" | "5-6" | "5-7" | "6-7"
-    long_post_times: ["11:30", "15:30"]    # Q24. Options: one "HH:MM" per long video
+    long_post_times: ["11:30", "16:00", "18:30"]  # Q24. One per run: morning, afternoon, evening
 
 # =====================================================================
 #  TEMPLATE  (copy, paste under "channels:", remove the "# ", answer each)
@@ -134,6 +140,7 @@ channels:
 #    language: "Telugu"                    # Q5. "English" | "Hindi" | "Telugu"
 #    voice: "te-IN-MohanNeural"            # Q6. see VOICE OPTIONS (must match language)
 #    voice_speed: "-5%"                    # Q7. "-15%" | "-5%" | "+0%" | "+10%"
+#    voice_expression: "measured"          # Q7b. "lively" | "measured" | "off"
 #    tone: "Energetic sports commentary."  # Q8. any text
 #    video_length_seconds: 30              # Q9. 15 | 30 | 45 | 60
 #    avoid_words: []                       # Q10. [] | ["word1", "word2"]
@@ -148,7 +155,7 @@ channels:
 #    visibility: "public"                  # Q18. "public" | "unlisted" | "private"
 #    test_run: false                       # Q19. true | false
 #    exclude_sources: []                   # Q20. [] | ["Channel Name 1", "Channel Name 2"]
-#    footage_style: "any"                  # Q21. "any" | "animation" | "film" | "mixed"
+#    footage_style: "any"                  # Q21. "any" | "animation" | "film" | "mixed" | "real"
 #    long_videos_per_day: 0                # Q22. 0 to 4
 #    long_video_minutes: 6                 # Q23. 4 | 5 | 6 | 7 | "4-5" | "4-6" | "5-6" | "5-7" | "6-7"
 #    long_post_times: []                   # Q24. one "HH:MM" per long video, e.g. ["14:00", "20:00"]

@@ -5,9 +5,14 @@ are free to use. Both ask that you show where the footage came from, so each des
 
 footage.provider in BRAIN.md: "pixabay", "pexels", or "auto" (whichever has a key: PIXABAY_API_KEY, then PEXELS_API_KEY).
 """
+import html
 import os
+import re
+import shutil
+import subprocess
 import time
 
+import imageio_ffmpeg
 import requests
 
 from agents.ai import generate_text
@@ -17,6 +22,16 @@ PROVIDERS = {
     "pexels": {"name": "Pexels", "site": "https://www.pexels.com", "env": "PEXELS_API_KEY"},
 }
 PEXELS_URLS = ["https://api.pexels.com/videos/search", "https://api.pexels.com/v1/videos/search"]
+# Real footage of the actual people, places and events (Frontline): Wikimedia Commons hosts official government and
+# news-agency video under free licences. Its API asks every client to identify itself.
+COMMONS_API = "https://commons.wikimedia.org/w/api.php"
+COMMONS_HEADERS = {"User-Agent": "FrontlineLedgerTT83/1.0 (https://github.com/tarunteja83/PersonalProjects-TT83)"}
+COMMONS_SITE = "Wikimedia Commons"
+# File-name ending of real-footage clips; the editor shows them whole (not cropped) in vertical Shorts
+REAL_SUFFIX = "_real.mp4"
+# Words in a footage term that describe the shot rather than who or what is in it
+SHOT_WORDS = {"the", "and", "with", "speech", "address", "remarks", "footage", "video", "clip", "scene", "shot",
+              "close", "closeup", "view", "aerial", "live", "news", "of", "in", "at", "on", "for"}
 PIXABAY_URL = "https://pixabay.com/api/videos/"
 MAX_DOWNLOAD_BYTES = 80 * 1024 * 1024
 # The ideal clip height for each output shape: Shorts are 1080x1920, long videos 1920x1080
@@ -110,8 +125,9 @@ def footage_rules(profile):
     return (
         ("Never use names of real people. The audience is young children, so keep every term child-friendly. "
          if kids else
-         "If it is about a public figure (a head of state, minister or other government representative), a country "
-         "or a famous place, the first term may name them, e.g. 'Narendra Modi speech' or 'Kremlin Moscow'. ")
+         "When the part is about a specific person (a head of state, minister or other government representative), "
+         "country, military unit, ship, weapon, place or event, the first term names it in 1 to 3 words so real "
+         "footage of it can be found, e.g. 'Zelensky', 'Narendra Modi', 'USS Gerald Ford', 'NATO summit', 'Kremlin'. ")
         + ("Some clips will be cartoon animation, so terms like 'cartoon cat' work well. "
            if profile.get("footage_style") in ("animation", "mixed") else "")
         + "Avoid graphic violence."
@@ -164,19 +180,135 @@ def scene_terms(ai_client, scenes, item, profile, models):
     return [terms.get(i) or [fallback[i % len(fallback)]] for i in range(len(scenes))]
 
 
+# ---------- Wikimedia Commons (real footage) ----------
+
+def free_licence(name):
+    """Public domain, CC0 and CC BY can go in a monetised video with a credit; share-alike, non-commercial and
+    no-derivatives licences can't, so they are skipped."""
+    name = (name or "").upper().replace("-", " ")
+    if "PUBLIC DOMAIN" in name or name.startswith(("PD", "CC0", "CC ZERO")):
+        return True
+    return name.startswith("CC BY") and not any(f" {x} " in f" {name} " for x in ("SA", "NC", "ND"))
+
+
+def key_words(term):
+    return [w for w in re.findall(r"[a-z0-9]+", term.lower()) if len(w) >= 3 and w not in SHOT_WORDS]
+
+
+def relevant(title, term):
+    """Every name and subject word of the term must be in the clip's title (a Zelensky scene needs Zelensky)."""
+    words = key_words(term)
+    title = title.lower()
+    return bool(words) and all(w in title for w in words)
+
+
+def commons_candidates(term, orientation="portrait", min_seconds=4):
+    """[(file title, video url, credit, duration seconds)] of freely licensed real footage matching the term."""
+    pace()
+    search = requests.get(COMMONS_API, headers=COMMONS_HEADERS, timeout=30, params={
+        "action": "query", "list": "search", "srsearch": f"{term} filetype:video", "srnamespace": 6,
+        "srlimit": 20, "format": "json"}).json()
+    titles = [h["title"] for h in search.get("query", {}).get("search", []) if relevant(h["title"], term)]
+    if not titles:
+        return []
+    pace()
+    info = requests.get(COMMONS_API, headers=COMMONS_HEADERS, timeout=30, params={
+        "action": "query", "titles": "|".join(titles[:20]), "prop": "videoinfo",
+        "viprop": "url|size|extmetadata|derivatives", "format": "json"}).json()
+    pages = {p["title"]: p for p in info.get("query", {}).get("pages", {}).values()}
+    target = TARGET_HEIGHT[orientation] if orientation == "landscape" else 720
+    found = []
+    for title in titles:
+        page = pages.get(title) or {}
+        details = (page.get("videoinfo") or [{}])[0]
+        meta = details.get("extmetadata", {})
+        licence = meta.get("LicenseShortName", {}).get("value", "")
+        if not free_licence(licence) or (details.get("duration") or 0) < min_seconds:
+            continue
+        versions = [d for d in details.get("derivatives", [])
+                    if d.get("type", "").startswith("video/webm") and (d.get("height") or 0) >= 360]
+        if not versions:
+            continue
+        best = min(versions, key=lambda d: abs(d["height"] - target))
+        artist = re.sub(r"<[^>]+>", "", meta.get("Artist", {}).get("value", ""))
+        artist = re.sub(r"\s+", " ", html.unescape(artist)).strip() or "unknown"
+        credit = f"{artist[:60]}, {licence}, commons.wikimedia.org/?curid={page.get('pageid')}"
+        found.append((title, best["src"], credit, float(details["duration"])))
+    return found
+
+
+def download_segment(url, target, start, seconds):
+    """Fetch only `seconds` of video from `start`: FFmpeg seeks over HTTP, so long videos aren't downloaded whole."""
+    exe = shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe()
+    subprocess.run([exe, "-hide_banner", "-loglevel", "error", "-y", "-user_agent", COMMONS_HEADERS["User-Agent"],
+                    "-ss", f"{start:.2f}", "-i", url, "-t", f"{seconds:.2f}", "-an", "-c:v", "libx264",
+                    "-preset", "veryfast", "-crf", "23", target], check=True, timeout=300, capture_output=True)
+
+
+def segment_start(duration, seconds):
+    """Skip the first quarter of longer videos (titles, intros) but stay inside the video."""
+    return max(0.0, min(duration * 0.25, duration - seconds - 0.5)) if duration > seconds + 1 else 0.0
+
+
+def name_only(term):
+    """'Narendra Modi summit' -> 'Narendra Modi': the first two words of a longer term, tried when the full term finds
+    nothing. Two-word terms aren't shortened ('Western intelligence' must not become 'Western')."""
+    words = key_words(term)
+    return " ".join(words[:2]) if len(words) > 2 else ""
+
+
+def real_clip(term, path, seconds, orientation, used_ids, cache, uses):
+    """Download real footage for the term into path; returns (file title, credit), or None if nothing matches.
+
+    An unused video is preferred; if every match was already used, the best one is reused from a later moment,
+    which keeps the number of credits (and the description) short.
+    """
+    if term not in cache:
+        cache[term] = commons_candidates(term, orientation)
+        if not cache[term] and name_only(term):
+            cache[term] = commons_candidates(name_only(term), orientation)
+    if not cache[term]:
+        return None
+    fresh = [c for c in cache[term] if c[0] not in used_ids]
+    title, url, credit, duration = (fresh or cache[term])[0]
+    used_ids.add(title)
+    start = segment_start(duration, seconds) + uses.get(title, 0) * (seconds + 2)
+    if start + seconds > duration:
+        start = (start % max(duration - seconds, 1.0)) if duration > seconds else 0.0
+    uses[title] = uses.get(title, 0) + 1
+    download_segment(url, path, start, seconds)
+    return title, credit
+
+
 def fetch_scene_clips(provider, api_key, terms, destination_dir, prefix, kids=False, style="any",
-                      orientation="portrait"):
+                      orientation="portrait", lengths=None):
     """One clip per scene, in scene order, trying each scene's terms in turn (specific first, then backup).
 
-    terms: [[term, ...] per scene]. Returns ([path or None per scene], credits, [term actually used per scene]).
+    style "real": each scene's specific term is first looked up as real footage of the actual people, places and
+    events (Wikimedia Commons); stock footage is used when there is none. terms: [[term, ...] per scene];
+    lengths: seconds each scene lasts. Returns ([path or None per scene], [(site, credit)], [term used per scene]).
     """
     os.makedirs(destination_dir, exist_ok=True)
-    paths, credits, used_terms, used_ids, cache = [], [], [], set(), {}
+    paths, credits, used_terms, used_ids, cache, real_cache, uses = [], [], [], set(), {}, {}, {}
     for index, options in enumerate(terms):
         wanted = clip_type(style, index)
         path, chosen = None, None
+        if style == "real" and options:
+            target = os.path.join(destination_dir, f"{prefix}_scene{index + 1:03d}{REAL_SUFFIX}")
+            scene_seconds = lengths[index] if lengths and index < len(lengths) else 8
+            try:
+                got = real_clip(options[0], target, min(max(scene_seconds + 1, 4), 30), orientation, used_ids,
+                                real_cache, uses)
+                if got:
+                    path, chosen = target, options[0]
+                    credits.append((COMMONS_SITE, got[1]))
+                    print(f"[Stock footage] Scene {index + 1}: '{options[0]}' -> real footage: {got[0][5:75]}")
+            except (requests.RequestException, subprocess.SubprocessError, OSError, ValueError, KeyError) as e:
+                print(f"[Stock footage] Scene {index + 1}: real footage for '{options[0]}' failed "
+                      f"({type(e).__name__}); using stock footage.")
+                path = None
         try:
-            for term in options:
+            for term in ([] if path else options):
                 for video_type in ([wanted, None] if wanted else [None]):
                     key = (term, video_type)
                     if key not in cache:
@@ -188,7 +320,7 @@ def fetch_scene_clips(provider, api_key, terms, destination_dir, prefix, kids=Fa
                         used_ids.add(clip_id)
                         path = os.path.join(destination_dir, f"{prefix}_scene{index + 1:03d}.mp4")
                         with_retries(lambda: download_file(url, path))
-                        credits.append(credit)
+                        credits.append((PROVIDERS[provider]["name"], credit))
                         chosen = term
                         print(f"[Stock footage] Scene {index + 1}: '{term}' -> {PROVIDERS[provider]['name']} "
                               f"video {clip_id}")
@@ -256,6 +388,15 @@ def pick_rendition(renditions, orientation="portrait"):
     return max(small_enough, key=lambda r: r["height"])
 
 
+def tags_match(tags, term):
+    """True if a clip's tags share a word with the search term (allowing plurals and word endings)."""
+    words = key_words(term)
+    if not words:
+        return True
+    tag_words = re.findall(r"[a-z0-9]+", tags.lower())
+    return any(t[:5] == w[:5] if min(len(t), len(w)) >= 5 else t == w for w in words for t in tag_words)
+
+
 def pixabay_candidates(api_key, term, kids, video_type, orientation):
     params = {"key": api_key, "q": term[:100], "per_page": 30, "order": "popular",
               "safesearch": "true" if kids else "false"}
@@ -264,7 +405,8 @@ def pixabay_candidates(api_key, term, kids, video_type, orientation):
     pace()
     response = requests.get(PIXABAY_URL, params=params, timeout=30)
     response.raise_for_status()
-    hits = [h for h in response.json().get("hits", []) if h.get("duration", 0) >= 3]
+    # Pixabay ranks popular clips even when they don't match; keep only clips whose tags share a word with the term
+    hits = [h for h in response.json().get("hits", []) if h.get("duration", 0) >= 3 and tags_match(h.get("tags", ""), term)]
 
     def is_portrait(hit):
         medium = hit["videos"].get("medium", {})
@@ -287,6 +429,8 @@ def clip_type(style, index):
     """footage_style -> Pixabay video_type for the index-th clip ("mixed" alternates cartoon and real)."""
     if style == "mixed":
         return "animation" if index % 2 == 0 else "film"
+    if style == "real":
+        return "film"
     return style if style in ("animation", "film") else None
 
 

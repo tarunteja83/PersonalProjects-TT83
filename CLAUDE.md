@@ -9,10 +9,11 @@ Read `youtube-automation-agents/execution/execution.md` (full user guide) and th
 | Key | Channel | Link | Posting (IST) |
 |---|---|---|---|
 | `geopolitics_war` | Frontline Ledger TT83 | youtube.com/@frontline-ledger-tt83 | Shorts 08:00, 10:00, 14:00, 16:00, 18:00, 19:00; long (5 to 7 min) 12:00, 16:30 |
-| `kids_edu` | WonderSprout Kids TT83 (made for kids) | youtube.com/channel/UCf9u1ZaejKPPA-oOD8oXVfg | Shorts 08:30, 10:30, 14:30, 16:00, 18:00, 19:00; long (4 to 6 min max) 11:30, 15:30 |
+| `kids_edu` | WonderSprout Kids TT83 (made for kids) | youtube.com/channel/UCf9u1ZaejKPPA-oOD8oXVfg | Shorts 09:00, 14:30; long (4 to 6 min max) 11:30, 16:00, 18:30 |
 
-Both channels run together three times a day (`fetch_time: ["06:00", "13:00", "17:00"]`): morning and afternoon make
-1 long + 2 Shorts per channel, the evening run 2 Shorts per channel (16 videos a day). Each run owns the go-live slots
+Both channels run together three times a day (`fetch_time: ["06:00", "13:00", "17:00"]`). Frontline: morning and
+afternoon 1 long + 2 Shorts, evening 2 Shorts. WonderSprout (since 2026-10-24, owner's request: long videos do better):
+morning and afternoon 1 long + 1 Short, evening 1 long. 13 videos a day. Each run owns the go-live slots
 between its fetch time and the next one (`plan_run` in `execution.py`). The cron fires `github_schedule_lead_minutes`
 (BRAIN.md, 265) early because GitHub starts scheduled runs 4 to 5 hours late. The owner plans to add more channels.
 
@@ -41,8 +42,9 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
   paused, so the workflow passes only `PIXABAY_API_KEY`.
 - **Footage synced to narration.** The script is written first, then one clip per scene. Frontline may name public
   figures (government representatives) in search terms; the kids channel never names real people.
-- **AI voices, not voice cloning:** edge-tts. `en-US-ChristopherNeural` for Frontline; `en-US-AnaNeural` (child
-  voice) for WonderSprout. Supported languages: English, Hindi, Telugu.
+- **AI voices, not voice cloning:** edge-tts with expressive sentence-by-sentence narration. Chosen by the owner on
+  2026-10-24 from samples: `en-US-BrianMultilingualNeural` (measured) for Frontline, `en-US-AvaMultilingualNeural`
+  (lively) for WonderSprout. Supported languages: English, Hindi, Telugu.
 - **Audio and branding:** no original audio (`original_audio_volume: 0`), a name-only LIKE then SUBSCRIBE end card
   (`show_logo: false`), and a watermark.
 - **WonderSprout content:** entertainment plus education. Original funny stories (no copyrighted characters) and
@@ -72,6 +74,23 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
   `agents/agent_8_analyst.py`) stores views on manifest items (`stats`, `views_48h`), orders each channel's search
   phrases by views after 48 h (re-trying phrases unused for 3 days), and posts a daily Telegram report
   (state in `01_manifests/analyst_state.json`).
+- **Engagement overhaul (2026-10-24, owner's viewer feedback, source S2 in view_techniques.md):**
+  - Real footage: Frontline `footage_style: "real"` searches Wikimedia Commons for real video of each scene's named
+    person/place/event (`stock_footage.commons_candidates`): only public domain, CC0, CC BY; every key word of the
+    term must be in the file title (longer terms retried with the first two words); only the needed seconds are
+    fetched with FFmpeg over HTTP; a used video is reused from a later moment; credits (author, licence,
+    `commons.wikimedia.org/?curid=`) go in the description. Real clips are named `*_real.mp4`; the editor shows them
+    whole on a blurred copy in Shorts. Copyrighted news-agency footage is deliberately not used.
+  - Pixabay clips must have a tag matching the term (`tags_match`), which fixed scenery that didn't match the words.
+  - Faster cuts: `clips_per_video: 6`, `long_scene_seconds: 8` (BRAIN.md `footage`).
+  - Expressive voice: `agents/expressive_voice.py` narrates sentence by sentence with per-kind pitch/rate/volume
+    (`voice_expression`: lively kids, measured news, off). Samples are in Google Drive `YouTube_Auto/voice_samples`;
+    the owner chose Ava (kids) and Brian (news).
+  - Kids writing rules rewritten in BRAIN.md Agent 3 (named hero, silly problem, three tries, twist, sound words,
+    talk to the viewer every 20 to 30 s).
+  - Trending hashtags: the Scout counts hashtags of the ~15 fastest-rising same-language videos per search
+    (`trending_hashtags`, generic and channel tags removed); the publisher puts 2 of them + the top topic tag first,
+    up to 12 in total.
 - **Gemini:** `gemini-2.5-flash` is retired for this key. `ai_models` in BRAIN.md falls back across 3.8 → 3.7 → 3.5
   → flash-latest, and retries dropped connections.
 

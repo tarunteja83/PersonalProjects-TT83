@@ -70,9 +70,9 @@ flowchart TD
 | Agent | Does | Uses |
 |---|---|---|
 | **1. Scout** ([agent_1_scout.py](../agents/agent_1_scout.py)) | Finds trending YouTube videos on your `search_phrases` (Shorts for Shorts, 4 to 20 minute videos for long ones), in your `language`. It ranks them by **views per hour** (what is rising right now), skips sources in another language (other scripts, Hinglish, or a title naming another language), tries the search phrases whose videos got the most views first, and avoids recent or excluded source channels. Only the topic is used, never the video itself. | YouTube Data API |
-| **3. Script & Voice** ([agent_3_voiceover.py](../agents/agent_3_voiceover.py)) | Gemini writes an original script, and in the same request the upload title, description, hashtags and 5 footage terms for the whole topic (one request instead of three). Hook first; long videos get 3 to 5 parts, a recap and a comment question. Narrated with your `voice` and `voice_speed`, recording when each sentence is spoken. If the narration is longer than allowed, it's shortened and narrated again. Then it's split into scenes: 3 per Short, ~15 seconds each in long videos. | Gemini, edge-tts |
-| **2. Footage** ([agent_2_downloader.py](../agents/agent_2_downloader.py)) | Gemini reads each scene and picks a specific search term (news channels may name public figures) plus a generic backup. One clip per scene comes from Pixabay, cartoon or real per `footage_style`. The log prints a **sync report**: each scene's time range, the footage shown and the words spoken. | Gemini, Pixabay |
-| **4. Editor** ([agent_4_editor.py](../agents/agent_4_editor.py)) | FFmpeg cuts every clip to its scene's narration time and fits it to 1080×1920 (Short) or 1920×1080 (long). It joins them, overlays the watermark, adds only the narration, and appends the LIKE → SUBSCRIBE end card. | FFmpeg |
+| **3. Script & Voice** ([agent_3_voiceover.py](../agents/agent_3_voiceover.py)) | Gemini writes an original script, and in the same request the upload title, description, hashtags and 5 footage terms for the whole topic (one request instead of three). Hook first; long videos get 3 to 5 parts, a recap and a comment question. Narrated with your `voice` and `voice_speed`, **sentence by sentence with its own pitch, speed and volume** (`voice_expression`: the hook lifts, questions rise, exclamations pop, plain sentences vary, the ending slows), recording when each sentence is spoken. If the narration is longer than allowed, it's shortened and narrated again. Then it's split into scenes: about 6 per Short, one about every 8 seconds in long videos. | Gemini (or Groq), edge-tts |
+| **2. Footage** ([agent_2_downloader.py](../agents/agent_2_downloader.py)) | Each scene gets a specific search term (news channels name the person, country, ship or event) plus a generic backup. With `footage_style: "real"` (Frontline) the specific term is first looked up as **real footage of the actual people and events** on Wikimedia Commons; otherwise one clip per scene comes from Pixabay (cartoon or real-life per `footage_style`), and only clips whose tags match the scene's words are used. The log prints a **sync report**: each scene's time range, the footage shown and the words spoken. | Wikimedia Commons, Pixabay |
+| **4. Editor** ([agent_4_editor.py](../agents/agent_4_editor.py)) | FFmpeg cuts every clip to its scene's narration time and fits it to 1080×1920 (Short) or 1920×1080 (long); in Shorts, real footage is shown whole on a blurred copy of itself so the people in it aren't cropped out. It joins them, overlays the watermark, adds only the narration, and appends the LIKE → SUBSCRIBE end card. | FFmpeg |
 | **5. Publisher** ([agent_5_publisher.py](../agents/agent_5_publisher.py)) | Confirms the YouTube login is the channel in `channels.yaml`. Uses the title, description and hashtags written with the script, plus the stock-footage credit. If they're missing it asks Gemini, and if Gemini is unavailable (quota used up) it uses the source video's title so the finished video still goes out. Uploads in 8 MB resumable chunks, scheduled to go live at its slot. | YouTube Data API |
 
 3. **6. Cleanup** ([agent_6_cleanup.py](../agents/agent_6_cleanup.py)): on GitHub, deletes clips, narration and published videos. On a laptop, deletes `YouTube_Auto` day folders older than `keep_days`.
@@ -98,7 +98,7 @@ YouTube publishes each video at its time even though the GitHub job finished hou
 
 **Start times:** GitHub starts scheduled runs late (4 to 5 hours in October 2026), so `github_schedule_lead_minutes` in `BRAIN.md` (265) makes the GitHub schedule fire that much earlier: 01:35, 08:35 and 12:35 IST, so runs start near 06:00, 13:00 and 17:00. If GitHub is ever on time, the run simply starts early; the videos still go live at their times. The start message shows how early or late each run was; if it drifts, change the lead and run `--check`. A go-live time that has already passed by upload time goes live 10 minutes after upload instead, 30 minutes apart.
 
-**Hashtags:** each video gets up to 8 hashtags in its description (YouTube shows the first three above the title): `#shorts` for Shorts, 5 from Gemini (2 broad, popular ones for the niche and 3 specific to the story), and the hashtags the trending source video uses, minus the source channel's own brand tag. The same words, plus the footage topic terms, go into the video's search tags. The Telegram message lists them.
+**Hashtags:** each video gets up to 12 hashtags in its description. YouTube shows the first three above the title, so they are the two hashtags the **fastest-rising videos in the niche are using right now** (counted by the Scout across ~15 trending videos, weighted by views per hour) and the strongest topic hashtag. Then `#shorts` for Shorts, the other topic hashtags from the AI (2 broad, 3 specific to the story), the remaining trending ones, and the source video's own. Generic tags (#viral, #fyp, #trending) and other channels' names are left out. The same words, plus the footage topic terms, go into the video's search tags. The Telegram message lists them.
 
 ---
 
@@ -159,6 +159,7 @@ If preparing the videos takes longer than planned, a passed go-live time is repl
 | Q5 | Narration language | `language` | `"English"` \| `"Hindi"` \| `"Telugu"` |
 | Q6 | Narrator voice | `voice` | See voices below; must match the language |
 | Q7 | Speaking speed | `voice_speed` | `"-15%"` slow and very clear \| `"-5%"` clear (recommended) \| `"+0%"` natural \| `"+10%"` brisk |
+| Q7b | How lively the voice is | `voice_expression` | `"lively"` (kids: big highs and lows) \| `"measured"` (news: subtle emphasis) \| `"off"` (one even tone, the old way). Default: lively for made-for-kids channels, measured for others |
 | Q8 | Narration style | `tone` | Any text |
 | Q9 | Length of each video | `video_length_seconds` | `15` \| `30` \| `45` \| `60` |
 | Q10 | Words the script must never use | `avoid_words` | `[]` or `["word1", "word2"]` |
@@ -176,7 +177,7 @@ If preparing the videos takes longer than planned, a passed go-live time is repl
 | Q22 | Long landscape videos per day | `long_videos_per_day` | `0` (none) to `4` |
 | Q23 | Length of each long video | `long_video_minutes` | `4` \| `5` \| `6` \| `7` \| `"4-5"` \| `"4-6"` \| `"5-6"` \| `"5-7"` \| `"6-7"` (a range gives each video a different length, never above the upper number) |
 | Q24 | When each long video goes live | `long_post_times` | one `"HH:MM"` per long video, e.g. `["14:00", "20:00"]` |
-| Q21 | Kind of stock clips used | `footage_style` | `"any"` \| `"animation"` (cartoon) \| `"film"` (real footage) \| `"mixed"` (cartoon and real alternate). Pixabay only; Pexels has no cartoon filter. |
+| Q21 | Kind of clips used | `footage_style` | `"any"` \| `"animation"` (cartoon) \| `"film"` (real-life stock) \| `"mixed"` (cartoon and real-life alternate) \| `"real"` (real footage of the actual people and events from Wikimedia Commons first, then real-life stock). Pexels has no cartoon filter. |
 
 **How source videos are picked:** each run starts from the next search phrase in turn and takes the most-viewed recent Short from each phrase in rotation. Searches favour videos in the channel's language. It takes **at most one video per source channel per run**, avoids channels used for any of that channel's last 5 videos, and never uses channels in `exclude_sources`. This keeps one big channel from supplying everything.
 
@@ -330,10 +331,19 @@ Set under `footage` in `BRAIN.md`:
 
 | `source` | What it does | Works on GitHub? |
 |---|---|---|
-| `"stock"` (default) | The script is written and narrated first, and the narration is split into scenes using the voice's sentence timings (3 scenes in a Short, about one every 15 seconds in a long video). Gemini picks a search term from **each scene's own words**, one matching clip per scene is downloaded from Pixabay or Pexels (`provider`), and each clip plays exactly while its scene is narrated. Descriptions credit the site and the contributors, as both sites ask. | Yes |
+| `"stock"` (default) | The script is written and narrated first, and the narration is split into scenes using the voice's sentence timings (about `clips_per_video` scenes in a Short, one about every `long_scene_seconds` in a long video). Gemini picks a search term from **each scene's own words**, one matching clip per scene is downloaded from Pixabay or Pexels (`provider`), and each clip plays exactly while its scene is narrated. Descriptions credit the site and the contributors, as both sites ask. | Yes |
 | `"youtube"` | Re-uses the trending video itself. | **No.** YouTube blocks downloads from cloud servers ("Sign in to confirm you're not a bot"). Works only when run from your laptop. |
 
-`clips_per_video` sets how many clips each video uses (default 3). The free limits (Pixabay: 100 requests a minute; Pexels: 200 an hour) are far more than 14 videos a day needs.
+`clips_per_video` (6) sets how many clips a Short uses and `long_scene_seconds` (8) how often a long video changes clip; faster changes hold attention better. The free limits (Pixabay: 100 requests a minute; Pexels: 200 an hour) are enough; searches are paced.
+
+**Real footage (`footage_style: "real"`, Frontline):** for each scene that names a person, country, ship or event, the pipeline searches **Wikimedia Commons** for real video of it (official government channels such as the White House, US military, Kremlin.ru, the Ukrainian president's office and the EU publish there, often within days). Rules:
+- **Licences:** only public domain, CC0 and CC BY are used; share-alike, non-commercial and no-derivatives licences are skipped because they don't allow use in a monetised video.
+- **Match:** every name word of the scene's term must be in the clip's title (a Zelensky scene gets Zelensky footage); longer terms are retried with just the name ("Narendra Modi summit" → "Narendra Modi").
+- **Only the needed seconds** are fetched, from about a quarter into the video (skipping intros), so long speeches aren't downloaded whole. A matching video already used is reused from a later moment rather than adding more credits.
+- **Credit:** each clip's author, licence and link are listed in the description.
+- Scenes with no real match use real-life Pixabay clips.
+
+News-agency footage (Reuters, AP, ANI, broadcasters' YouTube channels) is **not** used: it's copyrighted, would bring Content ID claims and copyright strikes, and can get a channel removed.
 
 ## Where Video Files Are Kept
 
