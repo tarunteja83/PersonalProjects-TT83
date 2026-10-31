@@ -133,6 +133,15 @@ class VoiceoverAgent:
             f"Source Video Context: {item['original_description'][:300]}\n\n"
             + task
         )
+        notes = item.get("reference_notes")
+        if item.get("request_kind") == "example":
+            # The owner shared the source video in Telegram as an example to follow (agents/inbox.py)
+            prompt += ("The channel owner shared the source video as an example: make an original video like it. "
+                       + (f"What makes it work: {notes} " if notes else "")
+                       + "Follow its format, hook style and pacing, never its words, characters, music or footage.\n")
+        elif item.get("request_kind") == "topic":
+            prompt += ("The channel owner asked for a video on this topic (the source title above)"
+                       + (f"; their wishes: {notes}" if notes else "") + ".\n")
         if avoid_terms:
             prompt += f"Never use these words or topics: {', '.join(avoid_terms)}.\n"
         long = item.get("format") == "long"

@@ -36,10 +36,10 @@ flowchart TD
     D --> E[Mark lost half-finished videos expired]
     E --> T[Telegram: run started, agent 7]
     T --> F{Long videos first, then Shorts}
-    F --> G[Scout, agent 1: rising same-language topic, best search phrases first]
-    G --> H[Script and voice, agent 3: Gemini or backup Groq writes script, title, hashtags, then narration, timings, scenes]
+    F --> G[Scout, agent 1: owner requests from Telegram first, then a rising same-language topic, best search phrases first, real search phrases]
+    G --> H[Script and voice, agent 3: Gemini or backup Groq writes script, search keyword, title, hashtags, then narration, timings, scenes]
     H --> I[Footage, agent 2: one matching stock clip per scene]
-    I --> J[Editor, agent 4: FFmpeg montage, watermark, narration, end card]
+    I --> J[Editor, agent 4: FFmpeg montage, watermark, narration, kids music and sound effects, end card]
     J --> K[Publisher, agent 5: channel check, title, chunked upload with go-live time]
     K --> F
     F -->|both formats done| L[Cleanup, agent 6]
@@ -316,9 +316,29 @@ It runs **every channel with `run: true`** using its answers in `questions.yaml`
 | `python execution/execution.py --list` | Show channels, plans and YouTube login status |
 | `python execution/execution.py --authorize KEY` | Sign in to YouTube for a channel |
 | `python execution/execution.py --hero-art FOLDER` | Import pictures of the WonderSprout character into `assets/wondersprout/` (see [PROMPTS.md](../assets/wondersprout/PROMPTS.md)) |
-| `python execution/execution.py --learn LINK` | Analyse a YouTube video about getting views and add its techniques to [view_techniques.md](view_techniques.md) as a proposal to review (laptop only) |
+| `python execution/execution.py --learn LINK` | Analyse a YouTube video about getting views and add its techniques to [view_techniques.md](view_techniques.md) as a proposal to review (uses the subtitles, or Gemini watches the video) |
+| `python execution/execution.py --inbox` | Handle the links and requests posted in the Telegram channel (what the hourly Telegram Inbox workflow runs) |
 
 ---
+
+## Telegram Inbox: Share a Video or Ask for One
+
+Post in the Telegram alerts channel (the one the bot posts to; only channel admins can post there). The
+**Telegram Inbox** workflow ([telegram_inbox.yml](../../.github/workflows/telegram_inbox.yml)) checks it every hour
+(GitHub may start it late; Telegram keeps unread posts for 24 hours), and the bot replies in the channel.
+
+| You post | What happens |
+|---|---|
+| A **YouTube link** to a video about getting views | Gemini watches it and adds a "proposed" entry to [view_techniques.md](view_techniques.md). The bot lists the proposed rules. |
+| `approve S5` / `approve S5 1,3` / `reject S5` | Adds all (or only rules 1 and 3) of S5's proposed rules to ACTIVE RULES, so every video from the next run follows them; or drops them. |
+| A **YouTube link** to a video you'd like more of (add "kids" or "frontline" to choose the channel) | Gemini watches it, picks the channel, and notes what makes it work. It's queued in [video_requests.json](video_requests.json): that channel's next Short (or long video, if it is one) is an original video like it (same topic and format, never its words, characters, music or footage), and its trend's search phrases lead the Scout's searches for 7 days. |
+| A request, e.g. `make a kids video about how octopuses hide` or `frontline long video on the India Russia oil deal` | The AI works out the channel, format and topic (and checks it's safe for kids on WonderSprout) and queues it the same way. |
+| `queue` | Lists the requests of the last 14 days. |
+| `cancel Q3` | Drops a request. |
+
+A queued request takes one of its channel's normal slots in the next run (the day's number of videos doesn't change);
+the upload message marks it with 📌. Instagram, TikTok and Facebook links can't be opened from GitHub (they need a
+login). The workflow commits view_techniques.md and video_requests.json to `main` when they change.
 
 ## Getting More Views
 
@@ -327,7 +347,7 @@ It runs **every channel with `run: true`** using its answers in `questions.yaml`
 - **HOW THE PIPELINE APPLIES THEM** lists what the code does (rising topics, same-language sources, the Analyst's feedback loop, the fixed schedule) and what the owner does by hand (thumbnails after phone verification, checking view duration and click-through rate in Studio).
 - **SOURCES** records every video analysed and what was adopted or rejected.
 
-To learn from a new video, run `python execution/execution.py --learn <link>` on the laptop (or give the link to Claude). It adds a "proposed" entry; nothing changes until good rules are copied into ACTIVE RULES. Anything that fakes engagement, misleads viewers or re-uploads other people's content is rejected: it breaks YouTube's policies.
+To learn from a new video, post its link in the Telegram channel (see Telegram Inbox above), run `python execution/execution.py --learn <link>`, or give the link to Claude. It adds a "proposed" entry; nothing changes until good rules are copied into ACTIVE RULES. Anything that fakes engagement, misleads viewers or re-uploads other people's content is rejected: it breaks YouTube's policies.
 
 ## WonderSprout, the Kids Channel's Superhero Host
 
@@ -399,6 +419,10 @@ Change the folder or the number of days under `local_media` in `BRAIN.md` (`root
 
 The manifest, YouTube logins and logos always stay in `GDrive_Mount/YouTube_Automation/`, because GitHub runs share them through Google Drive.
 
+A second workflow, **Telegram Inbox** ([telegram_inbox.yml](../../.github/workflows/telegram_inbox.yml)), runs every hour on its own: it
+reads your posts in the Telegram channel, replies, and commits `view_techniques.md` and `video_requests.json` to `main`
+when they change. See *Telegram Inbox* below.
+
 ## Good to Know
 
 - **GitHub may start a scheduled run hours after its scheduled time** (4 to 5 hours in October 2026). `github_schedule_lead_minutes` in `BRAIN.md` compensates (see "A typical day"). Future go-live times are always exact, because YouTube publishes them.
@@ -423,4 +447,6 @@ The manifest, YouTube logins and logos always stay in `GDrive_Mount/YouTube_Auto
 | "429 RESOURCE_EXHAUSTED" from Gemini | The Gemini quota is used up (free tier: 20 requests a day per model, reset at 12:30 IST). Groq takes over automatically if `GROQ_API_KEY` is set (check the run log line "Backup AI when Gemini is out of quota: groq (key set)"). If both are out, finished videos still upload with the source video's title. |
 | "The user has exceeded the number of videos they may upload" | YouTube's daily upload limit for that channel (low for new, unverified channels). Verify the channel by phone at youtube.com/verify. The video stays queued and uploads on a later run. |
 | Runs start far from 06:00 / 13:00 / 17:00 | GitHub's delay changed. The Telegram start message shows how early or late; change `github_schedule_lead_minutes` in `BRAIN.md`, run `--check` and push. |
+| The bot doesn't reply to a post in Telegram | Actions → **Telegram Inbox** → the latest run's step 4 log. GitHub may start the hourly run late; Telegram keeps unread posts for 24 hours. The bot must stay an admin of the channel, and only YouTube links can be watched. |
+| Telegram Inbox fails at step 5 (push) | Settings → Actions → General → Workflow permissions → **Read and write permissions**, then re-run it. |
 | Narration fails | The free voice service occasionally changes. Run `pip install -U edge-tts`. Videos stay queued and retry on the next run. |

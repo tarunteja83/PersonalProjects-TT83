@@ -55,6 +55,7 @@ class TelegramNotifierAgent:
             keyword = item.get("seo_keyword")
             lines.append(f"\n{idx}. {'🎬 Long video' if long else '📱 Short'}, {self.go_live_text(item)}\n"
                          f"<b>{html.escape(title)}</b>\n🔗 {url}"
+                         + (f"\n📌 Your request {item['request_id']}" if item.get("request_id") else "")
                          + (f"\n🔎 {html.escape(keyword)}" if keyword else "")
                          + (f"\n🏷 {html.escape(tags)}" if tags else ""))
         if len(uploaded) < planned:

@@ -9,6 +9,7 @@ Answers to every question live in execution/questions.yaml; this file reads them
     python execution/execution.py --authorize kids_edu   # sign in to YouTube for a channel (once)
     python execution/execution.py --ask                  # answer the questions interactively for a one-off run
     python execution/execution.py --learn <youtube link> # analyse a video about getting views (view_techniques.md)
+    python execution/execution.py --inbox                # handle links and requests posted in the Telegram channel
     python execution/execution.py --hero-art <folder>    # import WonderSprout character pictures (assets/wondersprout)
 
 One-off overrides for a run: --genre "..." --videos 6 --frequency "30 mins" --first-post "09:00" --dry-run
@@ -754,6 +755,21 @@ def learn_from(config, link):
     return 0
 
 
+def inbox_from(config):
+    """--inbox: handle the links and requests posted in the Telegram channel (agents/inbox.py)."""
+    from dotenv import load_dotenv
+    from google import genai
+    from agents import ai, inbox
+    load_dotenv(os.path.join(PROJECT_DIR, ".env"))
+    ai.configure(config)
+    for name in ("YOUTUBE_API_KEY", "GEMINI_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHANNEL_ID"):
+        if not os.getenv(name):
+            print(f"{name} is not set (add it to .env).")
+            return 2
+    inbox.run(config, genai.Client(api_key=os.getenv("GEMINI_API_KEY")))
+    return 0
+
+
 # ---------- --ask: answer the questions interactively for one run ----------
 
 def ask_mode(config, instructions):
@@ -841,6 +857,8 @@ def main():
     parser.add_argument("--learn", metavar="LINK",
                         help="Analyse a YouTube video about getting views; adds its techniques to "
                              "execution/view_techniques.md for review")
+    parser.add_argument("--inbox", action="store_true",
+                        help="Handle YouTube links and video requests posted in the Telegram channel")
     parser.add_argument("--check", action="store_true", help="Validate pages, show plan and usage, update schedule")
     parser.add_argument("--list", action="store_true", help="Show channels and their posting plans")
     args = parser.parse_args()
@@ -874,6 +892,8 @@ def main():
         return 0 if authorize(config, args.authorize) else 1
     if args.learn:
         return learn_from(config, args.learn)
+    if args.inbox:
+        return inbox_from(config)
     if args.hero_art:
         return import_hero_art(config, args.hero_art)
     if args.ask:

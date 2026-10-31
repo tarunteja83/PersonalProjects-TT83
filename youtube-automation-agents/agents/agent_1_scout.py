@@ -11,6 +11,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from agents.agent_8_analyst import order_phrases
+from agents.inbox import boosted_phrases, waiting_requests
 
 # YouTube's relevanceLanguage codes, so results favour videos in the channel's narration language
 LANGUAGE_CODES = {"English": "en", "Hindi": "hi", "Telugu": "te"}
@@ -253,13 +254,21 @@ class TrendScoutAgent:
         excluded = {name.lower() for name in self.profile.get("exclude_sources") or []}
         max_per_run = limit or self.profile["max_videos_per_run"]
 
-        # Phrases whose videos got the most views come first; untried or long-unused phrases are tried again
-        queries = order_phrases(self.profile["search_queries"],
-                                [i for i in mine if i.get("format", "short") == self.profile.get("format", "short")])
+        # Phrases whose videos got the most views come first; untried or long-unused phrases are tried again.
+        # The owner's recent Telegram requests lead for a few days, so the next videos follow that trend too
+        queries = list(dict.fromkeys(boosted_phrases(self.active_key) + order_phrases(
+            self.profile["search_queries"],
+            [i for i in mine if i.get("format", "short") == self.profile.get("format", "short")])))
         # Phrases are searched only when the round-robin reaches them (each search costs 1 of YouTube's 100 a
         # day), so a run that needs one or two topics usually searches just one or two phrases
 
         new_items, used_sources = [], set()
+        # Videos the owner asked for in Telegram take the first slots (a shared example, or a topic)
+        for request in waiting_requests(self.active_key, self.profile.get("format", "short"), existing_ids):
+            if len(new_items) >= max_per_run:
+                break
+            new_items.append(self.request_entry(request))
+            existing_ids.add(request["video_id"])
         # Rising, same-language sources first; a recently used source or another language only if nothing else
         for allow_recent, allow_language in ((False, False), (True, False), (True, True)):
             # Round-robin: best unused video from phrase 1, then phrase 2, ... until enough are picked
@@ -297,6 +306,20 @@ class TrendScoutAgent:
                 continue
             return item
         return None
+
+    def request_entry(self, request):
+        """A manifest entry for one of the owner's Telegram requests (agents/inbox.py)."""
+        phrase = (request.get("search_phrases") or [request.get("topic") or request.get("title", "")])[0]
+        source = {"id": {"videoId": request["video_id"]},
+                  "snippet": {"title": request.get("title") or request.get("topic", ""),
+                              "description": request.get("description", ""),
+                              "channelTitle": request.get("creator", "")}}
+        entry = self.entry(source, phrase)
+        entry.update(request_id=request["id"], source_url=request.get("link") or "",
+                     # What to make: the topic, and for a shared example what makes that video work
+                     reference_notes=request.get("notes", ""), request_kind=request.get("kind"))
+        print(f"[Agent 1: Scout] Making the owner's request {request['id']}: {entry['original_title']}")
+        return entry
 
     def entry(self, item, query):
         vid_id = item["id"]["videoId"]

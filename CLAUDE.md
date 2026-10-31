@@ -20,18 +20,20 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
 ## How it works (short)
 - **One entry point:** `execution/execution.py`. With no arguments it runs every channel with `run: true`. GitHub uses
   `--scheduled --cron`. `--check` validates config and rewrites the workflow cron lines. Other options: `--ask`,
-  `--authorize KEY`, `--format short|long|both`, `--dry-run`.
+  `--authorize KEY`, `--format short|long|both`, `--dry-run`, `--learn LINK`, `--inbox` (Telegram posts).
 - **Config:**
   - `execution/channels.yaml`: identity (name, `channel_url`, made_for_kids, watermark, category).
   - `execution/questions.yaml`: Q1 to Q24 per channel (plus `short_post_times`, `voice_expression`), with
     options written as comments.
   - `execution/view_techniques.md`: what gets views; its ACTIVE RULES go to the AI with every video.
+  - `execution/video_requests.json`: videos the owner asked for in Telegram (written and committed by the inbox bot).
   - `BRAIN.md`: global rules. Everything after `## AGENT INSTRUCTIONS` is sent to Gemini, so put human notes above it.
 - **Run order:** a Telegram start message, then per channel long videos first, then Shorts. Per format: scout
-  (rising, same-language trending topic via the YouTube API), then script + voice (Gemini, or Groq as backup, writes
-  script + title + hashtags + footage terms; expressive edge-tts with sentence timings; ~6 scenes per Short, ~8 s
+  (the owner's Telegram requests first, then a rising, same-language trending topic via the YouTube API, plus real
+  search phrases), then script + voice (Gemini, or Groq as backup, writes script + search keyword + title +
+  hashtags + footage terms; kids scripts carry [SOUND] tags; expressive edge-tts with sentence timings; ~6 scenes per Short, ~8 s
   scenes in long videos), then footage (Frontline: real Commons video/photo first; kids: matching cartoon/real
-  Pixabay clip or cartoon illustration), then the FFmpeg editor (kids: WonderSprout host, intro, outro), then the
+  Pixabay clip or cartoon illustration), then the FFmpeg editor (kids: WonderSprout host, intro, outro, music, sound effects), then the
   publisher (channel check, resumable chunked upload, `publishAt`). Then cleanup, a Telegram message per channel,
   and the Analyst (views, phrase scores, daily report).
 - **Manifest:** `GDrive_Mount/YouTube_Automation/01_manifests/trends.json`. Status flow: discovered, voiced,
@@ -78,6 +80,18 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
 - **GitHub schedule delay:** scheduled runs started 4 to 5 hours after the cron time, so the cron is shifted earlier
   (see above). Passed go-live slots go live soon after upload; the Telegram start message shows how early or late.
 - **Telegram:** each run sends a start message, then one message per channel (videos, links, go-live times, hashtags).
+- **Telegram inbox (2026-10-31, owner's request):** `agents/inbox.py`, run hourly by `.github/workflows/telegram_inbox.yml`
+  (`execution.py --inbox`). Reads `channel_post` updates of TELEGRAM_CHANNEL_ID via getUpdates (bot is an admin there;
+  no webhook; each post is confirmed after handling). A YouTube link: Gemini watches it (`ai.watch_video`, file_data
+  YouTube URL, low media resolution, ~60K tokens; title/description fallback) and replies KIND ADVICE (techniques ->
+  proposed view_techniques entry; owner replies `approve S5 [1,3]` / `reject S5` -> `learner.review`) or EXAMPLE
+  (channel, topic, why it works, search phrases -> `execution/video_requests.json`). Text requests ("make a kids
+  video about ...") are interpreted by the AI and queued too; `queue` / `cancel Q3`. The Scout makes waiting
+  requests first in normal slots (`waiting_requests`, `request_entry`; done = video_id already in the manifest;
+  topic ids are `request-Q<n>`), and their search phrases lead its queries for 7 days (`boosted_phrases`); Agent 3
+  gets `reference_notes`; Telegram upload messages show 📌. The workflow commits both files to main (setup_project.py
+  then lags for view_techniques.md until the next repack). Owner chose: approve rules in Telegram, links in the
+  existing channel, YouTube only for now (Instagram needs a login; possible later: send the video file to the bot).
 - **Hashtags:** up to 12: two currently trending niche hashtags and the top topic hashtag first, then #shorts, the
   AI's topic hashtags, more trending ones and the source video's; also used as search tags (details below).
 - **Search keywords (2026-10-31, owner's observation S3):** the Scout gets real search phrases per niche phrase
@@ -174,8 +188,9 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
 - **Write for the owner in plain terms:** explain where to click, and give options with a recommendation.
 - **When the owner sends a YouTube link about getting views:** analyse it and record it in
   `youtube-automation-agents/execution/view_techniques.md`, following entry S1 as the model.
-  1. Run `python execution/execution.py --learn <link>` (laptop; it uses 1 Gemini request and adds a "proposed"
-     entry). If Gemini or subtitles fail, read the metadata with the YouTube API and the subtitles with yt-dlp
+  1. Run `python execution/execution.py --learn <link>` (1 Gemini request; it reads the subtitles, or Gemini watches
+     the video when they can't be downloaded, and adds a "proposed" entry). If the owner posts the link in Telegram
+     instead, the inbox bot does this itself and the owner approves rules there. If Gemini or subtitles fail, read the metadata with the YouTube API and the subtitles with yt-dlp
      (`--skip-download --write-auto-subs --sub-langs "en.*"`) and write the entry yourself.
   2. Review every proposal critically: keep only techniques the video gives evidence for, reject anything that fakes
      engagement, misleads viewers or reuses others' content, and check it against what the pipeline already does.
@@ -185,6 +200,15 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
   4. Then the usual checks (--check, setup_project.py, 3.11 syntax, tests) and tell the owner what changed.
 
 ## Status and context for next session (as of 2026-10-31)
+- **Next steps (2026-10-31):**
+  - Telegram inbox (`agents/inbox.py`, `telegram_inbox.yml`) is merged but not yet run on GitHub: run the Telegram
+    Inbox workflow once by hand, have the owner post one YouTube link and one request ("make a kids video about
+    ..."), and check the bot's replies, the commit to main (needs Settings → Actions → Workflow permissions: read
+    and write, if the push fails) and that the next daily run makes the request (📌 in its Telegram message).
+  - Check from the next runs' Telegram messages: the search keyword (🔎) in titles, kids music and sound effects,
+    and the Shorts intro's effect on retention.
+  - Music licence: both BGM tracks look like CC BY and get no credit (owner's choice); offer to swap them for
+    tracks that need no credit.
 - **Immediate owner priority (CRITICAL FOR NEXT SESSION):**
   - **Video clips are still bad:** The owner explicitly noted *"the video clips are still bad"*. Pixabay stock search frequently returns generic, low-interest or poorly matched clips. The next agent/session must focus heavily on improving visual quality, clip matching, or alternative footage sources/curation for kids entertainment.
   - **Video length requirement:** Kids long videos must be **at least 5 to 7 minutes** without lagging.
@@ -212,9 +236,15 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
   - **Footage style:** Set `footage_style: "film"` in `execution/questions.yaml`: real-life Pixabay stock only (no cartoon
     clips or cartoon illustrations), matching the new "real animals" scripts.
   - **Validation:** `execution.py --check` passes cleanly; `setup_project.py` is re-packed.
+  - **Search keywords** (`9aebfaf`): see "Search keywords" under Key decisions; verified with one real AI request
+    (keyword "guess the animal challenge" from autocomplete, leading the title).
+  - **Telegram inbox:** see "Telegram inbox" under Key decisions. Verified locally: Gemini watched a real kids Short
+    (NB3OQ2IEM4w, 21 s) and queued it for WonderSprout; approve/reject/queue/cancel and the Scout's request handling
+    tested offline with stubs. Gemini watching a video was first confirmed on S1 (~63K tokens at low resolution).
 
 ## Historical status and run history
-- **Shipped on `main`** (newest first): audio leveling, kids BGM and SFX cues, animal game-show scripts (2026-10-31);
+- **Shipped on `main`** (newest first): Telegram inbox (share a video or ask for one; 2026-10-31); `9aebfaf` search
+  keywords, audio leveling, kids BGM and SFX cues, animal game-show scripts, description credits for Commons only;
   `8ca9d2f` WonderSprout's real character, intro/outro and stricter footage matching; `8fba579` WonderSprout host, Frontline real photos, lazy YouTube searches; `b0e5164` real footage,
   expressive voices (Ava, Brian), faster cuts, trending hashtags, kids 3 long + 2 Shorts; `e426569` view techniques,
   Analyst, `--learn`, Groq backup; `0736318` / `f0f8d7e` three runs a day, Telegram, title fallback.
@@ -242,6 +272,7 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
     addresses private" setting. History was not rewritten.
 - **Optional clean-up:** some early test videos on YouTube are unlisted; the owner was advised to delete or publish
   them in Studio. Laptop test videos are "edited" in the local manifest only (they upload only on a laptop run).
-- **Possible future work:** more channels (add to both YAML files and run `--authorize`; with ~1 search per video
+- **Possible future work:** Instagram/TikTok examples by sending the video file to the bot (Gemini Files API), more
+  channels (add to both YAML files and run `--authorize`; with ~1 search per video
   the YouTube search limit allows many more channels), YouTube Analytics scope for retention/CTR in the Analyst,
   and tuning scene matching from the sync reports.

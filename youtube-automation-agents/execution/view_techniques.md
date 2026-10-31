@@ -8,7 +8,8 @@ What we have learned about getting more views, and the rules every video follows
   measurement). Changing those needs a code change.
 - **SOURCES** records every video analysed, what it teaches, and what we adopted, did manually, or rejected.
 
-**To analyse a new video:** `python execution/execution.py --learn <youtube link>` (laptop). It reads the video's
+**To analyse a new video:** post its link in the Telegram alerts channel (the bot replies; "approve S5" adopts
+its rules), or run `python execution/execution.py --learn <youtube link>`. It reads the video's
 title, description, statistics and transcript, asks Gemini for the techniques, and adds an entry at the end of
 SOURCES marked "proposed". Nothing changes until a proposal is reviewed: copy the good rules into ACTIVE RULES (or
 ask Claude to), and mark the entry "reviewed". Never adopt anything that fakes engagement, misleads viewers or reuses

@@ -85,13 +85,13 @@ def _pace():
     _state["last_call"] = time.monotonic()
 
 
-def _try_models(client, prompt, models, errors):
+def _try_models(client, prompt, models, errors, settings=None):
     """One pass over the models. Returns the text, or None if every model failed with a retryable error."""
     for model in models:
         for attempt in range(2):
             _pace()
             try:
-                return client.models.generate_content(model=model, contents=prompt).text.strip()
+                return client.models.generate_content(model=model, contents=prompt, config=settings).text.strip()
             except Exception as e:
                 message = str(e)
                 if not is_retryable(e):
@@ -133,3 +133,26 @@ def generate_text(client, prompt, models=None):
     if _state["out_of_quota"] and not errors:
         errors.append("Gemini daily quota used up earlier in this run (429); no backup answered")
     raise RuntimeError("All AI models failed: " + " | ".join(errors))
+
+
+def watch_video(client, url, prompt, models=None):
+    """Gemini watches a public YouTube video from its link and answers the prompt; None if no model could.
+
+    Only Gemini can watch videos, so the backup providers aren't tried. Low media resolution keeps a 10-minute
+    video at about 60,000 tokens.
+    """
+    from google.genai import types
+    contents = types.Content(parts=[types.Part(file_data=types.FileData(file_uri=url)), types.Part(text=prompt)])
+    settings = types.GenerateContentConfig(media_resolution=types.MediaResolution.MEDIA_RESOLUTION_LOW)
+    errors = []
+    try:
+        text = _try_models(client, contents, models or DEFAULT_MODELS, errors, settings)
+    except Exception as e:
+        # A private or unsupported video is not retryable; the caller falls back to the title and description
+        errors.append(f"{type(e).__name__}: {str(e)[:200]}")
+        text = None
+    if text is None:
+        print(f"[AI] Gemini could not watch the video: {' | '.join(errors)[:400]}")
+        return None
+    _state["written_by"] = "gemini (watched the video)"
+    return text
