@@ -1,4 +1,24 @@
 {
-  "next_id": 1,
-  "requests": []
+  "next_id": 2,
+  "requests": [
+    {
+      "video_id": "puu06c5GSFg",
+      "link": "https://youtube.com/shorts/puu06c5GSFg?si=a4fpD4U1ozhSnRyD",
+      "description": "Two shelled eggs were preserved inside a dinosaur’s pelvis — not in a nest.\nTheir position in this Chinese oviraptorosaur (Oviraptorosauria) fossil suggests two functioning oviducts, each producing one egg at a time.\n\nShe likely laid eggs in pairs, repeating the process to build her clutch. What surprises you more: where the eggs were found or what they suggest about egg-laying? Tell us in the comments.\n\n#DinosaurEggs #Paleontology #DinosaurFossils",
+      "creator": "The Dinosaur Record",
+      "title": "Two Eggs Inside a Dinosaur Fossil Suggest It Laid Eggs in Pairs",
+      "kind": "example",
+      "channel": "kids_edu",
+      "format": "short",
+      "topic": "How oviraptorosaurs laid dinosaur eggs in pairs",
+      "notes": "The video hooks the viewer instantly with a bizarre fossil fact and a tight visual zoom on the skeleton rather than using an introductory greeting. It uses smooth, clear anatomical 3D CGI aligned precisely with synchronized subtitles to demystify complex science into an intuitive concept. Finally, it builds visual satisfaction by animating the egg pairs sequentially filling out a complete nest.",
+      "search_phrases": [
+        "dinosaur egg fossil discoveries",
+        "oviraptor dinosaur facts",
+        "prehistoric animal mysteries kids"
+      ],
+      "id": "Q1",
+      "added": "2026-10-31T19:21:39.092806+00:00"
+    }
+  ]
 }
