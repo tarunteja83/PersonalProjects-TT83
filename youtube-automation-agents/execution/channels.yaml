@@ -21,6 +21,7 @@ channels:
     made_for_kids: false                                             # REQUIRED: true | false  (true only for children under 13, legal COPPA setting)
     watermark_text: "@frontline-ledger-tt83"                         # optional: default is @ + channel name
     category_id: "25"                                                # optional: see category list below (default "24", or "27" for kids)
+    logo_file: "execution/logos/logo_geopolitics_war.png"
 
   kids_edu:
     channel_name: "WonderSprout Kids TT83"
@@ -29,15 +30,16 @@ channels:
     watermark_text: "WonderSprout Kids"
     mascot: "wondersprout"                 # superhero host in every video (kids channels only); leave out for none
     category_id: "27"
+    logo_file: "execution/logos/logo_kids_edu.png"
 
-  # Book storytelling channel (added 2026-10-31). Not in questions.yaml yet, so it does not post
-  # until the storytelling pipeline is built.
+  # Book storytelling channel (agents/storyteller.py; its books and schedule are under story: in questions.yaml)
   story_books:
     channel_name: "Inkbound Tales"
     channel_url: "https://www.youtube.com/@InkboundTalesTT83"
     made_for_kids: false
     watermark_text: "@InkboundTalesTT83"
     category_id: "24"
+    logo_file: "execution/logos/logo_story_books.png"
 
 # =====================================================================
 #  TEMPLATE  (copy, paste under "channels:", remove the "# ")
