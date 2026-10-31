@@ -28,6 +28,7 @@ storage_paths:
   audio_renders: "./GDrive_Mount/YouTube_Automation/02_audio_voiceovers"
   processed_videos: "./GDrive_Mount/YouTube_Automation/03_edited_videos"
   archive_dir: "./GDrive_Mount/YouTube_Automation/04_published_archive"
+  story_books: "./GDrive_Mount/YouTube_Automation/Story_Books"   # book channels: each book's text, plan, pictures, progress
 
 # Runs on your laptop or IDE put video files here instead, one folder per day:
 #   YouTube_Auto/<YYYY-MM-DD>/download  (source videos)  and  /upload  (narration + final videos)
@@ -36,6 +37,7 @@ local_media:
   enabled: true
   root: "H:/My Drive/YouTube_Auto"   # your Google Drive (Drive for Desktop); "~/YouTube_Auto" = your user folder instead
   keep_days: 2
+  story_books: "H:/My Drive/YouTube_Automation/Story_Books"   # the Drive folder GitHub syncs, so both share progress
 
 # Where each video's pictures come from:
 #   "stock"   = free stock clips matching the topic (works everywhere, including GitHub)
@@ -45,6 +47,18 @@ footage:
   provider: "auto"        # "pixabay" | "pexels" | "auto" (whichever key is set: PIXABAY_API_KEY, then PEXELS_API_KEY)
   clips_per_video: 6            # scenes per Short (a new clip about every 5 to 6 seconds)
   long_scene_seconds: 8         # long videos change clip about this often (was 15: too slow to hold attention)
+
+# Book storytelling channels (a `story:` section in questions.yaml; agents/storyteller.py)
+story:
+  picture_model: "@cf/black-forest-labs/flux-1-schnell"   # Cloudflare Workers AI (free daily allowance)
+  picture_steps: 4              # FLUX schnell is made for 1 to 4; each step costs allowance (6 steps: ~95 pictures a day)
+  retell_words: [1000, 1350]    # words per episode: about 7 to 9.5 minutes of narration
+  split_words: 4000             # chapters longer than this become Part 1 and Part 2
+  short_chapter_words: 725      # under about 5 minutes: never merged, its day gets a second video instead
+  check_pictures: true          # Gemini compares every picture with its sentence; failures are drawn again
+  pictures_per_check: 10        # pictures per Gemini request
+  picture_attempts: 3           # drawings per sentence before a last try with a simpler prompt
+  make_ahead_days: 1            # episodes are made this many days before they go live
 
 editing_rules:
   zoom_factor: 1.06

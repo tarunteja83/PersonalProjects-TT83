@@ -112,6 +112,9 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           CLIENT_SECRET_JSON: ${{ secrets.CLIENT_SECRET_JSON }}
+          # Pictures for the book storytelling channel (Cloudflare Workers AI, free daily allowance)
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           echo "YOUTUBE_API_KEY=${YOUTUBE_API_KEY}" >> .env
           echo "GEMINI_API_KEY=${GEMINI_API_KEY}" >> .env
@@ -119,6 +122,8 @@ jobs:
           echo "GROQ_API_KEY=${GROQ_API_KEY}" >> .env
           echo "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}" >> .env
           echo "TELEGRAM_CHANNEL_ID=${TELEGRAM_CHANNEL_ID}" >> .env
+          echo "CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID}" >> .env
+          echo "CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}" >> .env
           echo "${CLIENT_SECRET_JSON}" > client_secret.json
 
       - name: 7. Pull Channel Logins, Manifest & Prior Edited Videos from Google Drive
@@ -136,6 +141,8 @@ jobs:
           rclone copy gdrive:YouTube_Automation/00_tokens ./GDrive_Mount/YouTube_Automation/00_tokens
           rclone copy gdrive:YouTube_Automation/01_manifests ./GDrive_Mount/YouTube_Automation/01_manifests || true
           rclone copy gdrive:YouTube_Automation/03_edited_videos ./GDrive_Mount/YouTube_Automation/03_edited_videos || true
+          # Book channels: each book's text, plan, progress and unfinished episodes (finished ones stay in archive/)
+          rclone copy gdrive:YouTube_Automation/Story_Books ./GDrive_Mount/YouTube_Automation/Story_Books --exclude "*/archive/**" || true
 
       - name: 8. Run the Pipeline (execution/execution.py)
         if: steps.plan.outputs.channels != ''
@@ -166,5 +173,8 @@ jobs:
           rclone copy ./GDrive_Mount/YouTube_Automation/00_tokens gdrive:YouTube_Automation/00_tokens
           rclone copy ./GDrive_Mount/YouTube_Automation/01_manifests gdrive:YouTube_Automation/01_manifests
           rclone sync ./GDrive_Mount/YouTube_Automation/03_edited_videos gdrive:YouTube_Automation/03_edited_videos
+          if [ -d ./GDrive_Mount/YouTube_Automation/Story_Books ]; then
+            rclone copy ./GDrive_Mount/YouTube_Automation/Story_Books gdrive:YouTube_Automation/Story_Books
+          fi
           rclone delete gdrive:YouTube_Automation/02_raw_videos || true
           rclone delete gdrive:YouTube_Automation/02_audio_voiceovers || true

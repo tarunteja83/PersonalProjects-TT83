@@ -333,12 +333,46 @@ Post in the Telegram alerts channel (the one the bot posts to; only channel admi
 | `approve S5` / `approve S5 1,3` / `reject S5` | Adds all (or only rules 1 and 3) of S5's proposed rules to ACTIVE RULES, so every video from the next run follows them; or drops them. |
 | A **YouTube link** to a video you'd like more of (add "kids" or "frontline" to choose the channel) | Gemini watches it, picks the channel, and notes what makes it work. It's queued in [video_requests.json](video_requests.json): that channel's next Short (or long video, if it is one) is an original video like it (same topic and format, never its words, characters, music or footage), and its trend's search phrases lead the Scout's searches for 7 days. |
 | A request, e.g. `make a kids video about how octopuses hide` or `frontline long video on the India Russia oil deal` | The AI works out the channel, format and topic (and checks it's safe for kids on WonderSprout) and queues it the same way. |
-| `queue` | Lists the requests of the last 14 days. |
+| `book <title>`, e.g. `book Dracula` | Looks the book up on Project Gutenberg. A public-domain book is queued for Inkbound Tales and told after the books before it; a book still under copyright is refused. Book requests don't expire. |
+| `queue` | Lists the requests of the last 14 days (and every waiting book). |
 | `cancel Q3` | Drops a request. |
 
 A queued request takes one of its channel's normal slots in the next run (the day's number of videos doesn't change);
 the upload message marks it with 📌. Instagram, TikTok and Facebook links can't be opened from GitHub (they need a
 login). The workflow commits view_techniques.md and video_requests.json to `main` when they change.
+
+## Inkbound Tales: the Book Storytelling Channel
+
+A channel with a `story:` section in `questions.yaml` tells public-domain books chapter by chapter
+([agents/storyteller.py](../agents/storyteller.py)) instead of making trend videos. Every day at `post_time` (15:00
+IST) one illustrated episode of 5 to 10 minutes goes live, with a teaser Short at the same time.
+
+| Step | What happens |
+|---|---|
+| Book | The next title in `story.books` (then books queued in Telegram with `book <title>`) is found on Project Gutenberg. Only books out of copyright are told. The text, chapter list and episode plan are saved in Google Drive `YouTube_Automation/Story_Books/<book>/`. |
+| Episodes | One episode per chapter. A chapter over `split_words` (BRAIN.md `story:`) becomes Part 1 and Part 2. A chapter too short for 5 minutes is never merged: that day gets two videos. |
+| Script | One AI request: a faithful condensed retelling (about 1,000 to 1,350 words), one sentence per line, each with its speaker and a picture description, a hook, a "Previously" line, the cliffhanger, content warnings, the teaser lines, title and description. |
+| Voices | The narrator (`voice`) and a voice per character, chosen by gender and age and kept for the whole book (`characters.json`). |
+| Pictures | One pencil sketch per sentence (Cloudflare Workers AI, free daily allowance), each character drawn from the same description every time. Gemini checks them in batches of 10 against their sentences (and for stray writing); failures are drawn again. |
+| Warnings | If the chapter has violence, sexual themes, alcohol or drug use, strong language or frightening scenes, the episode opens with a spoken "viewer discretion" card and the description says so. Explicit passages are toned down, never narrated explicitly. |
+| Video | A book page per sentence: the picture with a slow zoom, the sentence beside it (the speaker's name above dialogue), a title card, the end card. The teaser Short reuses the episode's most gripping lines with a hook on screen. |
+| Upload | Scheduled for 15:00, added to the book's playlist (created automatically), custom thumbnail, the Short linking to the episode. |
+
+**Made a day ahead.** Each run (06:00, 13:00, 17:00) makes any episode due by tomorrow. If the free picture allowance
+runs out mid-episode, the work is kept in Drive and the next run continues, so the 15:00 video is still ready.
+
+**Your daily step in YouTube Studio (about 1 minute):** links in a Short's description can't be clicked, so after each
+upload Telegram asks you to open the Short → **Related video** → pick the episode. Only Studio can set it.
+
+**Settings** (`questions.yaml`, `story:`): `books`, `post_time`, `picture_style` (`pencil`, or `color` for ink and
+watercolor), `character_voices`, `teaser`. Every finished episode's pictures and prompts are kept in
+`Story_Books/<book>/archive/`, ready for a later colour or animation pass. Keys: `CLOUDFLARE_ACCOUNT_ID` and
+`CLOUDFLARE_API_TOKEN` (in `.env` and as GitHub secrets). The login needs the playlist permission
+(`youtube.force-ssl`): run `--authorize story_books` once.
+
+Test without changing the schedule: `python execution/execution.py --channel story_books --dry-run` (makes the next
+episode, no upload), or add `--post-now --visibility unlisted` to upload it now as unlisted (recorded as a test; the
+daily schedule still starts from it).
 
 ## Getting More Views
 

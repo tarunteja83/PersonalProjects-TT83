@@ -11,7 +11,9 @@ the posts in TELEGRAM_CHANNEL_ID (only channel admins can post there) and handle
      next run makes an original video like it (same topic and format, never its words, characters or footage),
      and its search phrases lead the Scout's searches for BOOST_DAYS days, so the following videos ride the trend.
 2. A message asking for a video ("make a kids video about how octopuses hide"): queued the same way.
-3. "queue" lists the recent requests; "cancel Q3" removes one.
+3. "book <title>" (e.g. "book Dracula"): queued for the book storytelling channel, told after the books in
+   questions.yaml (only public-domain books found on Project Gutenberg).
+4. "queue" lists the recent requests; "cancel Q3" removes one.
 
 Each post is confirmed after it's handled, so it's handled once. Telegram keeps unread posts for 24 hours.
 """
@@ -40,6 +42,7 @@ YOUTUBE_LINK = re.compile(r"https?://(?:www\.|m\.)?(?:youtube\.com|youtu\.be)/\S
 OTHER_VIDEO_LINK = re.compile(r"https?://(?:www\.)?(?:instagram\.com|tiktok\.com|facebook\.com|fb\.watch)/\S+")
 REVIEW = re.compile(r"^/?(approve|reject)\s+S?(\d+)\s*([\d,\s]*)$", re.IGNORECASE)
 CANCEL = re.compile(r"^/?cancel\s+Q?(\d+)$", re.IGNORECASE)
+BOOK = re.compile(r"^/?book\b[:\s]+(.+)$", re.IGNORECASE)
 
 
 # ---------- the request queue (execution/video_requests.json, committed by the workflow) ----------
@@ -55,7 +58,8 @@ def load_requests(path=REQUESTS_FILE):
 
 def save_requests(data, path=REQUESTS_FILE, now=None):
     cutoff = ((now or datetime.now(timezone.utc)) - timedelta(days=KEEP_DAYS)).isoformat()
-    data["requests"] = [r for r in data["requests"] if r.get("added", "") >= cutoff]
+    # Books wait their turn however long the books before them take
+    data["requests"] = [r for r in data["requests"] if r.get("added", "") >= cutoff or r.get("kind") == "book"]
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
@@ -131,6 +135,10 @@ def fields_of(text):
 def channel_list(config):
     lines = []
     for key, p in config["profiles"].items():
+        if p.get("story"):
+            lines.append(f"- {key}: {p['channel_name']}; tells public-domain books chapter by chapter (the owner "
+                         "queues a book with 'book <title>'); takes no topic requests")
+            continue
         kids = " (made for kids, ages 4 to 9)" if p.get("made_for_kids") else ""
         long = "Shorts and long videos" if (p.get("long") or {}).get("count") else "Shorts only"
         lines.append(f"- {key}: {p['channel_name']}{kids}; niche: {p.get('niche')}; language: "
@@ -293,6 +301,9 @@ class Inbox:
             save_requests(data)
             return (f"🗑 Q{cancel.group(1)} cancelled." if len(data["requests"]) < before
                     else f"There is no request Q{cancel.group(1)}.")
+        book = BOOK.match(text.strip())
+        if book:
+            return self.queue_book(book.group(1).strip().strip('"'))
         if text.strip().lower().lstrip("/") in ("queue", "requests"):
             recent = load_requests()["requests"]
             if not recent:
@@ -308,9 +319,38 @@ class Inbox:
         if channel not in self.config["profiles"]:
             return ("🤔 I couldn't tell which channel that video is for (or the topic isn't suitable for kids). "
                     "Say it again with the channel name, e.g. \"make a kids video about ...\".")
+        if self.config["profiles"][channel].get("story"):
+            return ("📚 The book channel tells whole books. Queue one with \"book &lt;title&gt;\", "
+                    "e.g. \"book Dracula\".")
         video_format = fields.get("FORMAT", "any").strip().lower()
         return self.queue("topic", fields, channel, video_format if video_format in ("short", "long") else "any",
                           description=text, creator="owner request")
+
+    def queue_book(self, title):
+        """Queue a public-domain book for the story channel (found on Project Gutenberg)."""
+        from agents.storyteller import find_book
+        channel = next((k for k, p in self.config["profiles"].items() if p.get("story")), None)
+        if not channel:
+            return "There is no book channel (a channel with a story: section in questions.yaml)."
+        found = find_book(title)
+        if not found:
+            return (f"🤔 <b>{html.escape(title)}</b> isn't on Project Gutenberg, so it is probably still under "
+                    "copyright. Check the spelling, or pick a public-domain classic.")
+        if not found["public_domain"]:
+            return f"⛔ <b>{html.escape(found['title'])}</b> is still under copyright, so it can't be told."
+        profile = self.config["profiles"][channel]
+        if found["title"].lower() in (b.lower() for b in profile["story"]["books"]) or any(
+                r.get("kind") == "book" and r.get("title", "").lower() == found["title"].lower()
+                for r in load_requests()["requests"]):
+            return f"ℹ️ <b>{html.escape(found['title'])}</b> is already on the list."
+        request_id = add_request({"kind": "book", "channel": channel, "format": "long", "title": found["title"],
+                                  "topic": found["title"], "creator": found["author"], "notes": "",
+                                  "description": found["summary"][:300], "search_phrases": [],
+                                  "video_id": f"book-{found['gutenberg_id']}"})
+        return (f"📚 <b>Queued {request_id}</b> for <b>{html.escape(profile['channel_name'])}</b>: "
+                f"<b>{html.escape(found['title'])}</b> by {html.escape(found['author'])} (public domain, Project "
+                f"Gutenberg #{found['gutenberg_id']}). It starts after the books before it are finished.\n"
+                f'Reply "cancel {request_id}" to drop it.')
 
     def handle(self, text):
         """The reply to one post (Telegram HTML), or None to stay quiet."""

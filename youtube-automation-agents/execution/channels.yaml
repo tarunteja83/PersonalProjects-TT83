@@ -30,6 +30,15 @@ channels:
     mascot: "wondersprout"                 # superhero host in every video (kids channels only); leave out for none
     category_id: "27"
 
+  # Book storytelling channel (added 2026-10-31). Not in questions.yaml yet, so it does not post
+  # until the storytelling pipeline is built.
+  story_books:
+    channel_name: "Inkbound Tales"
+    channel_url: "https://www.youtube.com/@InkboundTalesTT83"
+    made_for_kids: false
+    watermark_text: "@InkboundTalesTT83"
+    category_id: "24"
+
 # =====================================================================
 #  TEMPLATE  (copy, paste under "channels:", remove the "# ")
 # =====================================================================

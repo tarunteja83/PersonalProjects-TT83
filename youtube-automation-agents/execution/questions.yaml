@@ -127,6 +127,31 @@ channels:
     long_video_minutes: "5-7"              # Q23. Options: 4 | 5 | 6 | 7 | "4-5" | "4-6" | "5-6" | "5-7" | "6-7"
     long_post_times: ["11:30", "16:00", "18:30"]  # Q24. One per run: morning, afternoon, evening
 
+  # Book storytelling channel (agents/storyteller.py): one illustrated episode a day plus a teaser Short.
+  # It doesn't use trending searches or stock footage, so Q4, Q9 to Q11, Q20 and Q21 don't apply.
+  story_books:                             # Q1
+    run: true                              # Q2.  Options: true | false
+    genre: "Classic books retold chapter by chapter as illustrated audiobooks"
+    language: "English"                    # Q5.  English only for now
+    voice: "en-US-AndrewMultilingualNeural"  # Q6. The narrator (characters get their own voices, see story below)
+    voice_speed: "-5%"                     # Q7.  Options: "-15%" | "-5%" | "+0%" | "+10%"
+    voice_expression: "measured"           # Q7b. Options: "measured" (calm storyteller) | "lively"
+    tone: "A calm, atmospheric storyteller."
+    fetch_time: ["06:00", "13:00", "17:00"]  # Q12. Each run makes any episode due by tomorrow and finishes pictures left over
+    short_post_times: ["15:00"]            # Q13. The teaser Short (same time as its episode)
+    long_videos_per_day: 1                 # Q22. One episode a day (a day with a short chapter gets two)
+    long_post_times: ["15:00"]             # Q24. Episodes go live at 15:00
+    days: "daily"                          # Q16
+    timezone: "Asia/Kolkata"               # Q17
+    visibility: "public"                   # Q18. Options: "public" | "unlisted" | "private"
+    test_run: false                        # Q19. Options: true | false
+    story:
+      books: ["The Hound of the Baskervilles"]   # told in order; more can be queued in Telegram: "book <title>"
+      post_time: "15:00"                   # when each episode and its teaser go live
+      picture_style: "pencil"              # Options: "pencil" (pencil sketch) | "color" (ink and watercolor)
+      character_voices: true               # true = a voice per character (by gender and age) | false = narrator only
+      teaser: true                         # true = a teaser Short per episode, linking to it
+
 # =====================================================================
 #  TEMPLATE  (copy, paste under "channels:", remove the "# ", answer each)
 # =====================================================================

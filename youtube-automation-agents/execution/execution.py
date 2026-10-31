@@ -46,8 +46,8 @@ sys.path.insert(0, PROJECT_DIR)
 os.chdir(PROJECT_DIR)
 
 from brain import (  # noqa: E402
-    DEFAULT_VOICES, FREQUENCIES, LANGUAGES, MAX_VIDEOS_PER_DAY, SPEEDS, YOUTUBE_SCOPES,
-    channel_matches, cron_lines, due_profiles, fetch_time_for_cron, load_brain, parse_time,
+    DEFAULT_VOICES, FREQUENCIES, LANGUAGES, MAX_VIDEOS_PER_DAY, SPEEDS,
+    channel_matches, channel_scopes, cron_lines, due_profiles, fetch_time_for_cron, load_brain, parse_time,
 )
 
 SCHEDULE_BEGIN = "# BEGIN CHANNEL SCHEDULE"
@@ -324,6 +324,8 @@ def plan_times(plan, tz):
 
 def describe_run(profile, formats=("long", "short")):
     """e.g. '1 long (12:00) + 2 Shorts (08:00, 11:00)' for the plan set by plan_run."""
+    if profile.get("story_plan") is not None:
+        return profile["story_plan"]
     tz = profile["schedule"]["timezone"]
     parts = []
     if "long" in formats and profile["long"]["count"]:
@@ -463,10 +465,28 @@ def run_channels(config, instructions, keys, overrides=None, force_dry_run=False
     failed, results = [], {}
     # One-off counts or times replace the shared daily plan for this run
     shared = not any((overrides or {}).get(k) for k in ("videos", "first_post", "frequency", "post_now"))
-    fetches, planned = {}, {}
+    fetches, planned, stories = {}, {}, {}
     for key in ready:
         profile = config["profiles"][key]
         fetches[key] = fetch_time_for_cron(profile, cron) if cron else None
+        if profile.get("story"):
+            # Book channels plan their own episodes: each run fills the posting days up to a day ahead
+            from agents.storyteller import StoryChannel
+            try:
+                stories[key] = StoryChannel(config, key, instructions, overrides)
+                stories[key].targets = stories[key].plan()
+                profile["story_plan"] = stories[key].describe(stories[key].targets)
+            except Exception as e:
+                print(f"\n[Error] {key}: could not plan the story episodes: {e}")
+                stories[key] = None
+                profile["story_plan"] = f"could not plan ({str(e)[:120]})"
+                if not dry_runs[key]:
+                    from agents.agent_7_notifier import send_telegram
+                    send_telegram(f"❌ <b>{html.escape(profile['channel_name'])}</b>: could not prepare the next "
+                                  f"episode.\n<code>{html.escape(str(e)[:300])}</code>")
+            targets = stories[key].targets if stories[key] else []
+            planned[key] = len(targets) * (2 if profile["story"]["teaser"] else 1)
+            continue
         plan_run(profile, fetch=fetches[key], shared=shared)
         planned[key] = (profile["max_videos_per_run"] if "short" in formats else 0) + \
                        (profile["long"]["count"] if "long" in formats else 0)
@@ -480,8 +500,11 @@ def run_channels(config, instructions, keys, overrides=None, force_dry_run=False
             print(f"[Orchestrator] {key}: no go-live times fall in this run; nothing to make.")
             continue
         try:
-            results[key] = orchestrator.execute_pipeline(key, dry_run=dry_runs[key], formats=formats,
-                                                         planned=planned[key])
+            if key in stories:
+                results[key] = stories[key].run(stories[key].targets, dry_run=dry_runs[key])
+            else:
+                results[key] = orchestrator.execute_pipeline(key, dry_run=dry_runs[key], formats=formats,
+                                                             planned=planned[key])
             if not dry_runs[key] and results[key] == 0:
                 failed.append(key)
         except Exception as e:
@@ -574,7 +597,15 @@ def list_channels(config):
         days = p["schedule"]["days"] if isinstance(p["schedule"]["days"], str) else ",".join(p["schedule"]["days"])
         print(f" {key}  -  {p['channel_name']}")
         print(f"    {state} | YouTube login: {login} | {'TEST RUN' if p['test_run'] else 'uploads'}")
-        if p["has_answers"]:
+        if p["has_answers"] and p.get("story"):
+            story = p["story"]
+            print(f"    Story: {', '.join(story['books'])} | 1 episode a day"
+                  + (" + teaser Short" if story["teaser"] else "") + f", live at {story['post_time']} "
+                  f"{p['schedule']['timezone']} | {story['picture_style']} pictures | runs at "
+                  + ", ".join(f"{parse_time(t):%H:%M}" for t in p["schedule"]["post_times"]))
+            print(f"    narrator: {p['voice']} {p['voice_rate']}"
+                  + (" | a voice per character" if story["character_voices"] else ""))
+        elif p["has_answers"]:
             print(f"    Shorts: {describe_plan(p)} ({days}, {p['schedule']['timezone']})")
             print(f"    Long:   {describe_long(p)}")
             if len(p["schedule"]["post_times"]) > 1:
@@ -600,8 +631,8 @@ def usage_report(config):
         uploads += p["max_videos_per_run"] + long_count
         # The Scout searches phrases only until it has enough topics: about one search per video, at most every
         # phrase in each run
-        phrases = len(p["search_queries"])
-        searches += min(p["max_videos_per_run"], phrases * runs_per_day) + min(long_count, phrases * runs_per_day)
+        phrases = 0 if p.get("story") else len(p["search_queries"])
+        searches +=min(p["max_videos_per_run"], phrases * runs_per_day) + min(long_count, phrases * runs_per_day)
     print(f"\nDaily YouTube usage (all channels): {uploads} of {DAILY_UPLOAD_LIMIT} uploads, "
           f"up to {searches} of {DAILY_SEARCH_LIMIT} searches.")
     if uploads > DAILY_UPLOAD_LIMIT or searches > DAILY_SEARCH_LIMIT:
@@ -677,7 +708,10 @@ def authorize(config, key):
     os.makedirs(os.path.dirname(target), exist_ok=True)
     print(f"\nA browser window will open. Sign in with the Google account that owns '{profile['channel_name']}'")
     print(f"and choose that channel ({profile['channel_url']}).")
-    creds = InstalledAppFlow.from_client_secrets_file(client_secret, YOUTUBE_SCOPES).run_local_server(port=0)
+    # Always show Google's account and channel picker: otherwise Google may reuse the last choice (often the
+    # personal channel) without asking
+    creds = InstalledAppFlow.from_client_secrets_file(client_secret, channel_scopes(profile)).run_local_server(
+        port=0, prompt="select_account consent")
 
     items = build("youtube", "v3", credentials=creds).channels().list(part="snippet", mine=True).execute().get("items", [])
     if not items:

@@ -156,3 +156,24 @@ def watch_video(client, url, prompt, models=None):
         return None
     _state["written_by"] = "gemini (watched the video)"
     return text
+
+
+def look_at_pictures(client, pictures, prompt, models=None):
+    """Gemini looks at JPEG pictures ([(label, bytes)]) and answers the prompt; None if no model could.
+
+    Only Gemini can see pictures, so the backup providers aren't tried.
+    """
+    from google.genai import types
+    contents = []
+    for label, data in pictures:
+        contents += [label, types.Part.from_bytes(data=data, mime_type="image/jpeg")]
+    contents.append(prompt)
+    errors = []
+    try:
+        text = _try_models(client, contents, models or DEFAULT_MODELS, errors)
+    except Exception as e:
+        errors.append(f"{type(e).__name__}: {str(e)[:200]}")
+        text = None
+    if text is None:
+        print(f"[AI] Gemini could not look at the pictures: {' | '.join(errors)[:400]}")
+    return text

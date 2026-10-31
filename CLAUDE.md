@@ -10,6 +10,7 @@ Read `youtube-automation-agents/execution/execution.md` (full user guide) and th
 |---|---|---|---|
 | `geopolitics_war` | Frontline Ledger TT83 | youtube.com/@frontline-ledger-tt83 | Shorts 08:00, 10:00, 14:00, 16:00, 18:00, 19:00; long (5 to 7 min) 12:00, 16:30 |
 | `kids_edu` | WonderSprout Kids TT83 (made for kids) | youtube.com/channel/UCf9u1ZaejKPPA-oOD8oXVfg | Shorts 09:00, 14:30; long (5 to 7 min) 11:30, 16:00, 18:30 |
+| `story_books` | Inkbound Tales (general audience, same Google account) | youtube.com/@InkboundTalesTT83 | 1 illustrated book episode (5 to 10 min) + teaser Short, both 15:00 |
 
 Both channels run together three times a day (`fetch_time: ["06:00", "13:00", "17:00"]`). Frontline: morning and
 afternoon 1 long + 2 Shorts, evening 2 Shorts. WonderSprout (since 2026-10-24, owner's request: long videos do better):
@@ -42,6 +43,38 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
   (`YouTube_Automation/`).
 - **Laptop runs:** write video files to `H:/My Drive/YouTube_Auto/<YYYY-MM-DD>/download|upload` (Google Drive for
   Desktop), and day folders older than 2 days are deleted.
+
+## Inkbound Tales, the book storytelling channel (built 2026-10-31, owner's request)
+- `agents/storyteller.py`, used instead of the orchestrator for any channel with a `story:` section in
+  questions.yaml (`run_channels` branches on `profile["story"]`). Full description: execution.md "Inkbound Tales".
+- Owner's decisions: public-domain books only (Gutendex lookup, strict title match; a modern book is refused);
+  first book The Hound of the Baskervilles (owner preferred Jungle Book; trend reasoning chose Hound, Jungle Book
+  later side by side); one episode a day of 5 to 10 min, live 15:00 IST with a teaser Short at 15:00; chapters over
+  4,000 words become two parts; a chapter under ~5 min is NOT merged, that day gets two videos; condensed faithful
+  retelling; a picture for every sentence ("strict rule"), pencil sketch style (`picture_style: color` exists; the
+  owner asked for a future "colour animation of the pencil pictures" option: archived pictures + prompts are kept
+  for it, nothing built yet: free text-to-image can't recolour the same drawing consistently); a voice per
+  character by gender/age; spoken viewer-discretion card for violence, sexual themes, alcohol/drugs, language,
+  frightening scenes (explicit passages toned down); made a day ahead (each run makes what's due by tomorrow).
+- Pictures: Cloudflare Workers AI `@cf/black-forest-labs/flux-1-schnell` (square 1024; only prompt + steps
+  accepted), free 10,000 neurons/day, reset 00:00 UTC (05:30 IST). Measured 2026-10-31: at 6 steps only ~95 to 100
+  pictures a day (Chapter 1 has 105 lines), so picture_steps is 4 (~170 a day expected, not yet measured).
+  Safety-filter refusals ("NSFW", code 8007) hit harmless prompts (~3 in 77): plainer wordings are tried.
+  Pencil pictures are saved black and white (the model sometimes adds colour). Character consistency is
+  imperfect (Holmes varied between pictures in Chapter 1's test). Pollinations (no key: 1 per
+  45 s then 503) and HF (token lacks inference permission) failed on 2026-10-31. Gemini checks pictures in batches
+  of 10 (`ai.look_at_pictures`). Keys CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN in .env and GitHub secrets
+  (owner added both).
+- Story channel login adds `youtube.force-ssl` (playlists); `brain.channel_scopes` keeps other channels' scopes so
+  their tokens stay valid. The owner added the scope in the OAuth consent screen (Data Access) on 2026-10-31.
+- Storage: Drive `YouTube_Automation/Story_Books/<book>/` (book.json, text/, characters.json, progress.json,
+  episodes/<key>/, archive/<key>/), `channel_story_books.json` (last scheduled date, finished books). Laptop runs use
+  `H:/My Drive/YouTube_Automation/Story_Books` (the same Drive folder), GitHub syncs it (archive/ not downloaded).
+- Telegram: `book <title>` queues a book (kept until told). The Short's "Related video" link can only be set in
+  Studio: Telegram reminds the owner after each upload. Multi-language audio tracks (Hindi, Tamil, Telugu,
+  Marathi, Spanish; owner's wish) are phase 2: the Data API can't attach audio tracks (unverified, no official
+  doc found), so the plan is translated narration files in Drive for the owner to add in Studio, plus
+  localized titles/descriptions via the API.
 
 ## Key decisions (and why)
 - **Stock footage (Pixabay), not YouTube downloads.** YouTube blocks yt-dlp from GitHub's cloud IPs ("Sign in to

@@ -14,7 +14,7 @@ import time
 from agents.ai import generate_text
 from agents.agent_1_scout import GENERIC_HASHTAGS
 from agents.stock_footage import COMMONS_SITE
-from brain import YOUTUBE_SCOPES as SCOPES, channel_matches, item_matches
+from brain import channel_matches, channel_scopes, item_matches
 
 UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 UPLOAD_RETRIES = 5
@@ -42,7 +42,7 @@ class PublisherAgent:
         creds = None
 
         if os.path.exists(token_file):
-            creds = Credentials.from_authorized_user_file(token_file, SCOPES)
+            creds = Credentials.from_authorized_user_file(token_file, channel_scopes(self.profile))
 
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
@@ -55,7 +55,7 @@ class PublisherAgent:
                         "and upload the token file to Google Drive: YouTube_Automation/00_tokens/"
                     )
                 print(f"\n[!] Please select the '{self.profile['channel_name']}' Brand Channel in the browser popup!")
-                flow = InstalledAppFlow.from_client_secrets_file("client_secret.json", SCOPES)
+                flow = InstalledAppFlow.from_client_secrets_file("client_secret.json", channel_scopes(self.profile))
                 creds = flow.run_local_server(port=0)
             os.makedirs(tokens_dir, exist_ok=True)
             with open(token_file, "w") as token:

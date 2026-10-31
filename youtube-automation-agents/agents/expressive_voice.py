@@ -184,3 +184,31 @@ def narrate(script, voice, base_rate, style, out_mp3):
          "-ac", "1", "-i", "pipe:0", "-c:a", "libmp3lame", "-b:a", "96k", out_mp3],
         input=bytes(pcm), check=True)
     return len(pcm) / 2 / SAMPLE_RATE, timings, sfx_events
+
+
+def shift(value, offset, unit):
+    """'+4Hz' shifted by offset -> '+10Hz' (unit 'Hz' or '%')."""
+    return f"{int(str(value).replace(unit, '') or 0) + int(offset):+d}{unit}"
+
+
+def narrate_lines(lines, base_rate, style, out_mp3):
+    """Narrate a story line by line, each in its speaker's voice, never merging lines (each has its own picture).
+
+    lines: [{"text", "voice", "pitch" (Hz offset), "rate" (% offset)}]. Returns (seconds, [line start seconds]).
+    """
+    plans = []
+    for index, line in enumerate(lines):
+        rate, pitch, volume, pause = prosody(style, index, len(lines), line["text"], base_rate)
+        plans.append((line["text"], line["voice"], shift(rate, line.get("rate", 0), "%"),
+                      shift(pitch, line.get("pitch", 0), "Hz"), volume, pause))
+    audio = asyncio.run(_speak_all([plan[:5] for plan in plans]))
+    pcm, starts = bytearray(b"\0" * (int(0.15 * SAMPLE_RATE) * 2)), []
+    for mp3, plan in zip(audio, plans):
+        starts.append(len(pcm) / 2 / SAMPLE_RATE)
+        pcm += to_pcm(mp3)
+        pcm += b"\0" * (int(plan[5] * SAMPLE_RATE) * 2)
+    subprocess.run(
+        [ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-y", "-f", "s16le", "-ar", str(SAMPLE_RATE),
+         "-ac", "1", "-i", "pipe:0", "-c:a", "libmp3lame", "-b:a", "128k", out_mp3],
+        input=bytes(pcm), check=True)
+    return len(pcm) / 2 / SAMPLE_RATE, starts

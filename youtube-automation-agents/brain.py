@@ -41,6 +41,15 @@ YOUTUBE_SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.readonly",
 ]
+# Story channels also group their episodes into a playlist per book, which needs this extra permission. Other
+# channels keep the scopes above, so their saved logins stay valid.
+PLAYLIST_SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl"
+PICTURE_STYLES = ["pencil", "color"]
+
+
+def channel_scopes(profile):
+    """The YouTube permissions a channel's login asks for."""
+    return YOUTUBE_SCOPES + ([PLAYLIST_SCOPE] if profile.get("story") else [])
 
 
 # ---------- loading ----------
@@ -94,6 +103,10 @@ def apply_media_folders(config):
         root = fallback
     day = os.path.join(root, datetime.now().strftime("%Y-%m-%d"))
     paths = config["storage_paths"]
+    story_books = media.get("story_books")
+    if story_books and os.path.isdir(os.path.dirname(os.path.normpath(story_books))):
+        # The same Google Drive folder GitHub runs sync, so laptop and GitHub runs share each book's progress
+        paths["story_books"] = os.path.normpath(story_books)
     paths["raw_downloads"] = os.path.join(day, "download")
     paths["audio_renders"] = os.path.join(day, "upload")
     paths["processed_videos"] = os.path.join(day, "upload")
@@ -163,6 +176,8 @@ def build_profile(channel, answers):
         "test_run": bool(a.get("test_run", False)),
         "exclude_sources": a.get("exclude_sources") or [],
         "footage_style": a.get("footage_style") or "any",
+        # Book storytelling channels (agents/storyteller.py): books, picture style, character voices
+        "story": story_settings(a.get("story")) if a.get("story") is not None else None,
         "schedule": {
             "timezone": a.get("timezone") or DEFAULT_TIMEZONE,
             # One run per fetch time; the day's videos are shared between the runs (see run_window)
@@ -181,6 +196,17 @@ def build_profile(channel, answers):
             "minutes": a.get("long_video_minutes") or 6,
             "post_times": [str(t) for t in (a.get("long_post_times") or [])],
         },
+    }
+
+
+def story_settings(story):
+    story = story if isinstance(story, dict) else {}
+    return {
+        "books": [str(b) for b in story.get("books") or []],
+        "picture_style": story.get("picture_style") or "pencil",
+        "character_voices": story.get("character_voices", True) is not False,
+        "post_time": str(story.get("post_time") or "15:00"),
+        "teaser": story.get("teaser", True) is not False,
     }
 
 
@@ -293,6 +319,21 @@ def validate_answers(answers, channels):
         if isinstance(long_count, int) and long_count > len(long_times):
             problems.append(f"{where}: give one long_post_times entry per long video "
                             f"({long_count} needed, {len(long_times)} given)")
+        story = a.get("story")
+        if story is not None:
+            if not isinstance(story, dict):
+                problems.append(f"{where}: story answers must be indented under 'story:'")
+            else:
+                if story.get("picture_style") not in (None, *PICTURE_STYLES):
+                    problems.append(f"{where}: story picture_style must be one of {', '.join(PICTURE_STYLES)}")
+                books = story.get("books")
+                if not (isinstance(books, list) and books and all(isinstance(b, str) for b in books)):
+                    problems.append(f'{where}: story books must be a list of book titles in quotes, '
+                                    f'e.g. ["The Hound of the Baskervilles"]')
+                try:
+                    parse_time(story.get("post_time") or "15:00")
+                except (ValueError, AttributeError):
+                    problems.append(f"{where}: story post_time must be HH:MM in 24-hour format, in quotes")
         lookback = a.get("lookback_days")
         if lookback is not None and not (isinstance(lookback, int) and 1 <= lookback <= 30):
             problems.append(f"{where}: lookback_days must be a whole number from 1 to 30")
