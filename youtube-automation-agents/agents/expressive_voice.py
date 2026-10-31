@@ -16,6 +16,43 @@ import edge_tts
 import imageio_ffmpeg
 
 SAMPLE_RATE = 24000
+
+# Sound-effect cues the kids script writes in square brackets ([BOING], [TADA], ...) -> files in assets/audio/kids_sfx.
+# The tags are never spoken; the editor plays the sound where the tag sits in the sentence.
+KNOWN_SFX = {
+    "boing": "boing.wav", "pop": "pop.wav", "whoosh": "whoosh.wav", "zoom": "whoosh.wav",
+    "ding": "ding.wav", "chime": "ding.wav", "bell": "ding.wav",
+    "tick": "tick.wav", "clock": "tick.wav", "timer": "tick.wav",
+    "tada": "tada.wav", "ta-da": "tada.wav", "fanfare": "tada.wav",
+    "splash": "splash.wav", "splat": "splash.wav",
+    "cheer": "cheer.wav", "yay": "cheer.wav", "woohoo": "cheer.wav",
+}
+CUE_TAG = re.compile(r"\[([A-Za-z0-9_\-]+)\]")
+# Without tags, a spoken sound word still gets its effect (whole words only: "holding" is not "ding")
+SOUND_WORDS = re.compile(r"\b(boing|pop|whoosh|splash|splat|ding|ta-?da|yay|woohoo)\b|3[.,]*\s*2[.,]*\s*1\b", re.I)
+# Repeats of one cue in a sentence ([TICK] [TICK] [TICK]) play this many seconds apart
+REPEAT_GAP = 0.6
+
+
+def strip_cues(text):
+    """The text without its [SOUND] tags, so they are never read aloud or shown in a description."""
+    return re.sub(r"\s+([!?.,])", r"\1", re.sub(r"\s{2,}", " ", CUE_TAG.sub("", text))).strip()
+
+
+def extract_sfx_and_clean(sentence):
+    """(spoken sentence, [(fraction of the sentence where the sound plays, sfx file)])."""
+    clean = strip_cues(sentence)
+    cues = [(m.start() / max(1, len(sentence)), KNOWN_SFX[m.group(1).lower()])
+            for m in CUE_TAG.finditer(sentence) if m.group(1).lower() in KNOWN_SFX]
+    if not CUE_TAG.search(sentence):
+        word = SOUND_WORDS.search(clean)
+        if word:
+            # No group means the "3, 2, 1" countdown
+            sound = KNOWN_SFX[word.group(1).lower().replace("-", "")] if word.group(1) else "tick.wav"
+            cues = [(word.end() / max(1, len(clean)), sound)]
+    return clean, cues
+
+
 # Per sentence kind: (speed %, pitch Hz, volume %, pause after in seconds), added to the channel's voice_speed.
 # "plain" sentences rotate through their variants so neighbouring sentences never sound identical.
 STYLES = {
@@ -112,19 +149,38 @@ def to_pcm(mp3):
 
 
 def narrate(script, voice, base_rate, style, out_mp3):
-    """Write the expressive narration to out_mp3. Returns (seconds, [(sentence start seconds, sentence text)])."""
-    sentences = split_sentences(script)
-    plans = [prosody(style, i, len(sentences), s, base_rate) for i, s in enumerate(sentences)]
-    audio = asyncio.run(_speak_all([(s, voice, r, p, v) for s, (r, p, v, _) in zip(sentences, plans)]))
-    pcm, timings = bytearray(), []
+    """Write the expressive narration to out_mp3.
+
+    Returns (seconds, [(sentence start seconds, sentence text)], [(seconds, sfx file)]).
+    """
+    spoken, cue_plans = [], []
+    for sentence in split_sentences(script):
+        clean, cues = extract_sfx_and_clean(sentence)
+        # A sentence that is only sound tags ("[TADA] [CHEER]!") isn't spoken: its sounds play in the pause
+        if re.search(r"\w", clean):
+            spoken.append(clean)
+            cue_plans.append(cues)
+        elif cue_plans:
+            cue_plans[-1] += [(1.0, sound) for _, sound in cues]
+    plans = [prosody(style, i, len(spoken), s, base_rate) for i, s in enumerate(spoken)]
+    audio = asyncio.run(_speak_all([(s, voice, r, p, v) for s, (r, p, v, _) in zip(spoken, plans)]))
+    pcm, timings, sfx_events = bytearray(), [], []
     lead_in = int(0.15 * SAMPLE_RATE) * 2
     pcm += b"\0" * lead_in
-    for sentence, mp3, (_, _, _, pause) in zip(sentences, audio, plans):
-        timings.append((len(pcm) / 2 / SAMPLE_RATE, sentence))
-        pcm += to_pcm(mp3)
+    for sentence, cues, mp3, (_, _, _, pause) in zip(spoken, cue_plans, audio, plans):
+        start = len(pcm) / 2 / SAMPLE_RATE
+        timings.append((start, sentence))
+        speech = to_pcm(mp3)
+        length = len(speech) / 2 / SAMPLE_RATE
+        repeats = {}
+        for fraction, sound in cues:
+            at = start + fraction * length + REPEAT_GAP * repeats.get(sound, 0)
+            repeats[sound] = repeats.get(sound, 0) + 1
+            sfx_events.append((round(at, 2), sound))
+        pcm += speech
         pcm += b"\0" * (int(pause * SAMPLE_RATE) * 2)
     subprocess.run(
         [ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-y", "-f", "s16le", "-ar", str(SAMPLE_RATE),
          "-ac", "1", "-i", "pipe:0", "-c:a", "libmp3lame", "-b:a", "96k", out_mp3],
         input=bytes(pcm), check=True)
-    return len(pcm) / 2 / SAMPLE_RATE, timings
+    return len(pcm) / 2 / SAMPLE_RATE, timings, sfx_events

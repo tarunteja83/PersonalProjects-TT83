@@ -581,7 +581,7 @@ class FlyingSky:
 def speak_line(line, voice, rate, out_path):
     """Her line in the channel's voice, lively. Returns the audio's length in seconds."""
     from agents import expressive_voice
-    seconds, _ = expressive_voice.narrate(line, voice, rate, "lively", out_path)
+    seconds, *rest = expressive_voice.narrate(line, voice, rate, "lively", out_path)
     return seconds
 
 

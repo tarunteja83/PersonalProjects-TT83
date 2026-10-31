@@ -47,8 +47,11 @@ def group_scenes(sentences, total_seconds, scene_seconds):
     return scenes
 
 
-META_FIELDS = {"TITLE": "seo_title", "DESCRIPTION": "seo_description", "HASHTAGS": "seo_hashtags",
-               "FOOTAGE": "topic_terms", "SCENES": "scene_hints"}
+META_FIELDS = {"KEYWORD": "seo_keyword", "TITLE": "seo_title", "DESCRIPTION": "seo_description",
+               "HASHTAGS": "seo_hashtags", "KEYWORDS": "seo_keywords", "FOOTAGE": "topic_terms",
+               "SCENES": "scene_hints"}
+# Search phrases from the Scout shown to the AI (YouTube autocomplete first, then rising videos' keyword tags)
+PROMPT_KEYWORDS = 12
 
 
 def parse_script_reply(text):
@@ -69,14 +72,15 @@ def parse_script_reply(text):
         elif field and line.strip():
             # A continuation line: drop list numbering or bullets such as "1." or "-"
             parts[field].append(re.sub(r"^\s*(?:\d+[.)]|[-*•])\s*", "", line))
-    joiners = {"scene_hints": " ; ", "topic_terms": ", "}
+    joiners = {"scene_hints": " ; ", "topic_terms": ", ", "seo_keywords": ", "}
     meta = {}
     for field, values in parts.items():
         value = joiners.get(field, " ").join(v.strip().strip("*").strip().strip('"') for v in values if v.strip())
         if value:
             meta[field] = value
-    if "topic_terms" in meta:
-        meta["topic_terms"] = [t.strip().strip('"') for t in meta["topic_terms"].split(",") if t.strip()]
+    for field in ("topic_terms", "seo_keywords"):
+        if field in meta:
+            meta[field] = [t.strip().strip('"') for t in meta[field].split(",") if t.strip()]
     if "scene_hints" in meta:
         meta["scene_hints"] = parse_scene_hints(meta["scene_hints"]) or None
         if not meta["scene_hints"]:
@@ -132,18 +136,30 @@ class VoiceoverAgent:
         if avoid_terms:
             prompt += f"Never use these words or topics: {', '.join(avoid_terms)}.\n"
         long = item.get("format") == "long"
+        keywords = (item.get("search_keywords") or [])[:PROMPT_KEYWORDS]
+        if keywords:
+            # Real search data from the Scout: what people type into YouTube search for this niche right now
+            prompt += f"What viewers search on YouTube for this niche right now: {'; '.join(keywords)}.\n"
+        # Kids scripts carry the [SOUND] tags from the master instructions; they are removed before narration
+        brackets = "no brackets other than the sound tags" if self.profile.get("made_for_kids") else "no brackets"
         prompt += (
             f"Stay within {target_words} words; a little shorter is fine, longer is not. The narration must be "
-            "only spoken text: no stage directions, no brackets, no intro labels.\n\n"
-            # The upload title and footage ideas come from this same request, so each video costs one call
+            f"only spoken text: no stage directions, {brackets}, no intro labels.\n\n"
+            # The upload title, keywords and footage ideas come from this same request, so each video costs one call
             "Reply in exactly this layout:\n"
+            "KEYWORD: the one search phrase (2 to 5 words, in the script language) a viewer would type to find this "
+            "video; use a phrase from the search list above when one fits the story, never one that doesn't\n"
             f"TITLE: a {'click-worthy YouTube video' if long else 'viral YouTube Short'} title, at most "
-            f"{70 if long else 60} characters, no quotes, in the script language\n"
-            f"DESCRIPTION: a {3 if long else 2}-sentence SEO description in the script language, with no credits "
-            "or source names (credits are added automatically)\n"
+            f"{70 if long else 60} characters, no quotes, in the script language, with the KEYWORD (or its words) "
+            "in the first 3 to 5 words, written naturally\n"
+            f"DESCRIPTION: a {3 if long else 2}-sentence SEO description in the script language whose first "
+            "sentence uses the KEYWORD naturally, with no credits, source names or keyword lists\n"
             "HASHTAGS: 5 hashtags separated by spaces that people actively search on YouTube for this topic right "
             "now: 2 broad, popular ones for the niche and 3 specific to this story (no spaces inside a hashtag"
             f"{', do not use #shorts' if long else ''})\n"
+            "KEYWORDS: 6 more search phrases (2 to 5 words each, comma-separated) viewers might type for this exact "
+            "video: close variations of the KEYWORD and the story's main subject, only what the video is truly "
+            "about\n"
             "FOOTAGE: 5 English stock-footage search terms (1 to 3 words each, comma-separated) for visuals "
             "that match the whole topic"
             + (", child-friendly" if self.profile.get("made_for_kids") else "") + "\n"
@@ -185,21 +201,23 @@ class VoiceoverAgent:
         return trimmed[:cut + 1] if cut > len(trimmed) // 2 else trimmed
 
     def synthesize_voice(self, script_text, video_id):
-        """Narrate the script; returns (mp3 path, spoken seconds, [(sentence start seconds, sentence text)])."""
+        """Narrate the script; returns (mp3 path, spoken seconds, [(sentence start seconds, sentence text)], sfx_cues)."""
         out_mp3 = os.path.join(self.paths["audio_renders"], f"vo_{self.active_key}_{video_id}.mp3")
         expression = self.profile.get("voice_expression", "off")
         print(f"[Agent 3: Voiceover] Narrating video {video_id} with {self.voice} ({self.voice_rate}, "
               f"{expression} expression)...")
         if expression != "off":
             try:
-                seconds, sentences = expressive_voice.narrate(script_text, self.voice, self.voice_rate, expression,
-                                                              out_mp3)
-                return out_mp3, seconds + 0.3, sentences
+                seconds, sentences, sfx_cues = expressive_voice.narrate(script_text, self.voice, self.voice_rate,
+                                                                        expression, out_mp3)
+                return out_mp3, seconds + 0.3, sentences, sfx_cues
             except Exception as e:
                 print(f"[Agent 3: Voiceover] Expressive narration failed ({e}); narrating in one pass instead.")
 
         async def narrate():
-            communicate = edge_tts.Communicate(script_text, self.voice, rate=self.voice_rate,
+            # Sound tags ([TADA]) are for the editor only; one-pass narration has no sound effects
+            communicate = edge_tts.Communicate(expressive_voice.strip_cues(script_text), self.voice,
+                                               rate=self.voice_rate,
                                                boundary="SentenceBoundary")
             sentences, end = [], 0.0
             with open(out_mp3, "wb") as f:
@@ -213,12 +231,12 @@ class VoiceoverAgent:
             return sentences, end
 
         sentences, end = asyncio.run(narrate())
-        return out_mp3, end + 0.5, sentences
+        return out_mp3, end + 0.5, sentences, []
 
     def narrate_within_limit(self, item, script):
         """Narrate, and if the spoken length runs past the video's maximum, shorten the script and narrate again."""
         max_seconds = item.get("max_seconds")
-        vo_path, seconds, sentences = self.synthesize_voice(script, item["video_id"])
+        vo_path, seconds, sentences, sfx_cues = self.synthesize_voice(script, item["video_id"])
         if max_seconds and seconds > max_seconds * DURATION_TOLERANCE:
             words = len(script.split())
             # Aim for the video's target length (inside the allowed range), not just under the maximum
@@ -229,8 +247,8 @@ class VoiceoverAgent:
             script = self.fit_length(script, target_words) if words > target_words * LENGTH_TOLERANCE else script
             if len(script.split()) > target_words:
                 script = " ".join(script.split()[:target_words])
-            vo_path, seconds, sentences = self.synthesize_voice(script, item["video_id"])
-        return script, vo_path, seconds, sentences
+            vo_path, seconds, sentences, sfx_cues = self.synthesize_voice(script, item["video_id"])
+        return script, vo_path, seconds, sentences, sfx_cues
 
     def run(self):
         manifest_path = self.paths["manifest_file"]
@@ -248,12 +266,14 @@ class VoiceoverAgent:
                 vid_id = item["video_id"]
                 try:
                     script = self.generate_script(item)
-                    script, vo_path, seconds, sentences = self.narrate_within_limit(item, script)
-                    item["generated_script"] = script
+                    script, vo_path, seconds, sentences, sfx_cues = self.narrate_within_limit(item, script)
+                    item["generated_script"] = expressive_voice.strip_cues(script)
                     item["voiceover_path"] = vo_path
                     item["voice_seconds"] = round(seconds, 2)
                     # When each sentence starts: the kids host's expressions follow these
                     item["sentence_timings"] = [[round(start, 2), text] for start, text in sentences]
+                    # Where the kids channel's sound effects play ([[seconds, file]], from the script's [SOUND] tags)
+                    item["sfx_cues"] = [[at, sound] for at, sound in sfx_cues]
                     if stock:
                         if item.get("format") != "long":
                             scene_seconds = seconds / int((self.config.get("footage") or {}).get("clips_per_video", 6))

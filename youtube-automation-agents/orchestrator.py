@@ -2,6 +2,13 @@
 import copy
 import json
 import os
+import sys
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 from agents.agent_1_scout import TrendScoutAgent
 from agents.agent_2_downloader import DownloaderAgent

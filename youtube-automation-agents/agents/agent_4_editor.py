@@ -16,6 +16,8 @@ from agents.stock_footage import REAL_SUFFIX
 from brain import item_matches
 
 SHORT_SIZE, LONG_SIZE = (1080, 1920), (1920, 1080)
+# Kids channels' background music (kids_bgm) and cartoon sound effects (kids_sfx)
+AUDIO_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "audio")
 
 # MoviePy 1.0.3's resize uses Image.ANTIALIAS, which Pillow 10 removed (LANCZOS is the same filter)
 if not hasattr(Image, "ANTIALIAS"):
@@ -165,10 +167,11 @@ class VideoEditorAgent:
             return None
         return concatenate_videoclips([ImageClip(frame).set_duration(seconds) for frame, seconds in card])
 
-    @staticmethod
-    def custom_hero_clip(kind, width, height, work):
+    def custom_hero_clip(self, kind, width, height, work, volume_factor=None):
         """The owner's own intro / outro video (assets/wondersprout/intro.mp4, outro.mp4; intro_short.mp4 and
         outro_short.mp4 for vertical Shorts if given), fitted to this video's shape without stretching, or None."""
+        if volume_factor is None:
+            volume_factor = (self.rules.get("audio_mastering") or {}).get("hero_volume_factor", 0.28)
         names = [f"{kind}_short.mp4", f"{kind}.mp4"] if height > width else [f"{kind}.mp4"]
         source = next((os.path.join(mascot.ART_DIR, n) for n in names
                        if os.path.exists(os.path.join(mascot.ART_DIR, n))), None)
@@ -183,12 +186,63 @@ class VideoEditorAgent:
                f"[bg][fg]overlay=(W-w)/2:(H-h)/2,fps=30,format=yuv420p,setsar=1[v]")
         encode = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-ar", "44100", "-ac", "2"]
         if has_audio:
-            ffmpeg("-i", source, "-filter_complex", fit, "-map", "[v]", "-map", "0:a:0", *encode, target)
+            # Her clips are about 11 dB louder than the narration: turned down so the video's volume stays even
+            ffmpeg("-i", source, "-filter_complex", fit, "-map", "[v]", "-map", "0:a:0", "-af",
+                   f"volume={volume_factor}", *encode, target)
         else:
             # A clip without sound gets silence, so it still joins the rest of the video
             ffmpeg("-i", source, "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-filter_complex", fit,
                    "-map", "[v]", "-map", "1:a", "-shortest", *encode, target)
         return target
+
+    def mix_soundtrack(self, item, work, duration):
+        """Kids channels: the narration with quiet background music and the script's cartoon sound effects.
+
+        Returns the soundtrack to use (the plain narration for other channels or if mixing fails).
+        """
+        vo_path = item["voiceover_path"]
+        if not (self.profile.get("made_for_kids") or self.profile.get("bgm_enabled")):
+            return vo_path
+        bgm_dir = os.path.join(AUDIO_DIR, "kids_bgm")
+        tracks = sorted(t for t in os.listdir(bgm_dir) if t.endswith((".mp3", ".ogg", ".wav"))) \
+            if os.path.isdir(bgm_dir) else []
+        sfx_cues = [(at, sound) for at, sound in item.get("sfx_cues") or []
+                    if at < duration and os.path.exists(os.path.join(AUDIO_DIR, "kids_sfx", sound))]
+        if not tracks and not sfx_cues:
+            return vo_path
+
+        levels = self.rules.get("audio_mastering") or {}
+        # amix divides every input by the number of inputs unless normalize=0, which buried the narration
+        inputs = ["-i", vo_path]
+        graph = [f"[0:a]volume={levels.get('voiceover_volume', 1.15)},aresample=44100,"
+                 f"aformat=channel_layouts=stereo[vo]"]
+        labels = ["[vo]"]
+        if tracks:
+            # The same video always gets the same track; different videos rotate through them
+            track = tracks[sum(map(ord, item["video_id"])) % len(tracks)]
+            inputs += ["-stream_loop", "-1", "-i", os.path.join(AUDIO_DIR, "kids_bgm", track)]
+            graph.append(f"[1:a]volume={levels.get('bgm_volume', 0.12)},aresample=44100,"
+                         f"aformat=channel_layouts=stereo,afade=t=in:st=0:d=1.5,"
+                         f"afade=t=out:st={max(0.5, duration - 2.0):.2f}:d=2.0[bgm]")
+            labels.append("[bgm]")
+        for at, sound in sfx_cues:
+            inputs += ["-i", os.path.join(AUDIO_DIR, "kids_sfx", sound)]
+            index = inputs.count("-i") - 1
+            delay = max(0, int(at * 1000))
+            graph.append(f"[{index}:a]volume={levels.get('sfx_volume', 0.35)},aresample=44100,"
+                         f"aformat=channel_layouts=stereo,adelay={delay}|{delay}[sfx{index}]")
+            labels.append(f"[sfx{index}]")
+        graph.append("".join(labels) + f"amix=inputs={len(labels)}:duration=first:dropout_transition=2:"
+                     f"normalize={levels.get('amix_normalize', 0)}[aout]")
+        soundtrack = os.path.join(work, "soundtrack.wav")
+        try:
+            ffmpeg(*inputs, "-filter_complex", ";".join(graph), "-map", "[aout]", "-t", f"{duration:.3f}",
+                   soundtrack)
+        except RuntimeError as e:
+            print(f"[Agent 4: Editor] Music and sound effects failed ({e}); using the narration only.")
+            return vo_path
+        print(f"[Agent 4: Editor] Added music{f' ({track})' if tracks else ''} and {len(sfx_cues)} sound effects")
+        return soundtrack
 
     def mascot_settings(self, item):
         """{} for channels without a host; else which hero parts this video gets (intro, host, outro)."""
@@ -250,7 +304,8 @@ class VideoEditorAgent:
             ffmpeg("-sseof", "-0.2", "-i", montage, "-frames:v", "1", last_frame)
             card = self.end_card_frames(Image.open(last_frame).convert("RGB"))
 
-            inputs = ["-i", montage, "-i", item["voiceover_path"], "-i", mark]
+            soundtrack_path = self.mix_soundtrack(item, work, duration)
+            inputs = ["-i", montage, "-i", soundtrack_path, "-i", mark]
             hero = self.mascot_settings(item)
             video = "[0:v]"
             if hero.get("host", True) and hero:

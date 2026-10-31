@@ -24,7 +24,7 @@ Everything is driven by three pages and one file:
 | Channel key | Channel | Audience | Voice | Daily (IST) |
 |---|---|---|---|---|
 | `geopolitics_war` | Frontline Ledger TT83 | General | `en-US-BrianMultilingualNeural`, measured | 6 Shorts and 2 long videos (5 to 7 min) with real footage of the people and events |
-| `kids_edu` | WonderSprout Kids TT83 | Children (Made for Kids) | `en-US-AvaMultilingualNeural`, lively | 2 Shorts and 3 long videos (4 to 6 min), hosted by the WonderSprout superhero |
+| `kids_edu` | WonderSprout Kids TT83 | Children (Made for Kids) | `en-US-AvaMultilingualNeural`, lively | 2 Shorts and 3 long videos (5 to 7 min), hosted by the WonderSprout superhero |
 
 Runs start at 06:00, 13:00 and 17:00 IST; each run makes the videos due before the next run and schedules them on
 YouTube. Narration supports English, Hindi and Telugu.
@@ -58,7 +58,7 @@ left off, and finished videos that missed their run are uploaded by the next one
 | 3 | **Script & Voice** | [agent_3_voiceover.py](youtube-automation-agents/agents/agent_3_voiceover.py), [expressive_voice.py](youtube-automation-agents/agents/expressive_voice.py) | Gemini (Groq as a free backup) writes an original script plus title, description, hashtags and footage terms in one request. `edge-tts` narrates it sentence by sentence with varied pitch, speed and volume, and the timings split it into scenes. |
 | 2 | **Footage** | [agent_2_downloader.py](youtube-automation-agents/agents/agent_2_downloader.py), [stock_footage.py](youtube-automation-agents/agents/stock_footage.py) | One clip per scene. Frontline: real video, then a real photo, of the named person or event from Wikimedia Commons (free licences only), else Pixabay. WonderSprout: a Pixabay cartoon or real clip whose tags match the scene's subject, else a matching cartoon illustration. |
 | 4 | **Editor** | [agent_4_editor.py](youtube-automation-agents/agents/agent_4_editor.py), [mascot.py](youtube-automation-agents/agents/mascot.py) | FFmpeg cuts each clip to its scene, adds the narration, watermark and LIKE / SUBSCRIBE end card. On WonderSprout it adds the superhero host in a corner (expressions follow the script), her intro and her outro. |
-| 5 | **Publisher** | [agent_5_publisher.py](youtube-automation-agents/agents/agent_5_publisher.py) | Confirms the login is the right channel, adds up to 12 hashtags and the footage credits, and uploads in resumable chunks scheduled to go live at the channel's times. |
+| 5 | **Publisher** | [agent_5_publisher.py](youtube-automation-agents/agents/agent_5_publisher.py) | Confirms the login is the right channel, adds up to 12 hashtags, and uploads in resumable chunks scheduled to go live at the channel's times. |
 | 6 | **Cleanup** | [agent_6_cleanup.py](youtube-automation-agents/agents/agent_6_cleanup.py) | Deletes files no longer needed. |
 | 7 | **Telegram** | [agent_7_notifier.py](youtube-automation-agents/agents/agent_7_notifier.py) | One message per channel: each video's title, link, go-live time and hashtags. |
 | 8 | **Analyst** | [agent_8_analyst.py](youtube-automation-agents/agents/agent_8_analyst.py) | Records every upload's views, scores search phrases by views after 48 hours (the Scout uses the best first), and posts a daily report. |
@@ -127,7 +127,8 @@ recreates them (and the workflow at the repository root). Binary files (the Wond
 ### Responsible Use
 
 - **No reused videos:** trending videos supply only the topic. Footage is free stock (Pixabay) or freely licensed real
-  footage and photos (Wikimedia Commons: public domain, CC0 and CC BY only), credited in every description.
+  footage and photos (Wikimedia Commons: public domain, CC0 and CC BY only). Commons footage is credited in the description;
+  Pixabay stock and music are not.
   Copyrighted news-agency footage is never used.
 - **Disclosure:** the synthetic-media flag is on for every upload (AI voice and AI-made host).
 - **Kids:** WonderSprout is marked Made for Kids (COPPA and stricter YouTube rules); stories are original, never

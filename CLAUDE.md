@@ -9,7 +9,7 @@ Read `youtube-automation-agents/execution/execution.md` (full user guide) and th
 | Key | Channel | Link | Posting (IST) |
 |---|---|---|---|
 | `geopolitics_war` | Frontline Ledger TT83 | youtube.com/@frontline-ledger-tt83 | Shorts 08:00, 10:00, 14:00, 16:00, 18:00, 19:00; long (5 to 7 min) 12:00, 16:30 |
-| `kids_edu` | WonderSprout Kids TT83 (made for kids) | youtube.com/channel/UCf9u1ZaejKPPA-oOD8oXVfg | Shorts 09:00, 14:30; long (4 to 6 min max) 11:30, 16:00, 18:30 |
+| `kids_edu` | WonderSprout Kids TT83 (made for kids) | youtube.com/channel/UCf9u1ZaejKPPA-oOD8oXVfg | Shorts 09:00, 14:30; long (5 to 7 min) 11:30, 16:00, 18:30 |
 
 Both channels run together three times a day (`fetch_time: ["06:00", "13:00", "17:00"]`). Frontline: morning and
 afternoon 1 long + 2 Shorts, evening 2 Shorts. WonderSprout (since 2026-10-24, owner's request: long videos do better):
@@ -50,7 +50,13 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
 - **AI voices, not voice cloning:** edge-tts with expressive sentence-by-sentence narration. Chosen by the owner on
   2026-10-24 from samples: `en-US-BrianMultilingualNeural` (measured) for Frontline, `en-US-AvaMultilingualNeural`
   (lively) for WonderSprout. Supported languages: English, Hindi, Telugu.
-- **Audio and branding:** no original audio (`original_audio_volume: 0`), a name-only LIKE then SUBSCRIBE end card
+- **Audio standards and leveling (2026-10-31 calibration):**
+  - **Broadcast loudness standard:** Uniform mean volume of ~ -20 dB (±0.5 dB) across all video segments (intro, narration, outro) to eliminate jarring volume spikes or ear fatigue. Verified via FFmpeg `volumedetect`.
+  - **Hero clips attenuation (`hero_volume_factor: 0.28`):** Raw 3D hero assets (`intro.mp4`, `outro.mp4`) peak at 0 dBFS (-9.1 dB mean) and are ~11-15 dB louder than speech. `VideoEditorAgent.custom_hero_clip` attenuates them using `-af volume=0.28`, bringing them to -20.0 dB mean.
+  - **FFmpeg `amix` normalization (`normalize=0`):** FFmpeg's `amix` filter divides audio by 1/N unless `normalize=0` is set. When mixing narration, BGM, and SFX, `amix` MUST use `normalize=0` with narration at `volume=1.15` so speech is not suppressed down to -30 dB.
+  - **Background Music (BGM):** Cheerful royalty-free music (`assets/audio/kids_bgm/`) ducked under speech at `volume=0.12` with 1.5s fade-in and 2.0s fade-out.
+  - **Sound Effects (SFX):** Cartoon SFX (`assets/audio/kids_sfx/`: boing, pop, whoosh, ding, tick, tada, splash, cheer) leveled at `volume=0.35`, triggered by script cues `[BOING]`, `[POP]`, `[TICK]`, `[TADA]`, etc. parsed by `expressive_voice.py`.
+- **Branding:** no original audio (`original_audio_volume: 0`), a name-only LIKE then SUBSCRIBE end card
   (`show_logo: false`), and a watermark.
 - **WonderSprout content:** entertainment plus education. Original funny stories (no copyrighted characters),
   narrated by the WonderSprout superhero host, and `footage_style: "mixed"` (Pixabay animation alternating with
@@ -74,6 +80,12 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
 - **Telegram:** each run sends a start message, then one message per channel (videos, links, go-live times, hashtags).
 - **Hashtags:** up to 12: two currently trending niche hashtags and the top topic hashtag first, then #shorts, the
   AI's topic hashtags, more trending ones and the source video's; also used as search tags (details below).
+- **Search keywords (2026-10-31, owner's observation S3):** the Scout gets real search phrases per niche phrase
+  (`search_suggestions`: YouTube autocomplete via suggestqueries.google.com, unofficial, free, no API quota,
+  other-language phrases dropped; plus `trending_keywords` from rising videos' snippet.tags) into
+  `item["search_keywords"]`. The script request also returns KEYWORD (`seo_keyword`, used in the title's first words
+  and the first description sentence) and KEYWORDS (`seo_keywords`). `search_tags` leads with them, then
+  `relevant_keywords` (Scout phrases whose every 4+ letter word is in the video). Telegram shows the keyword (🔎).
 - **Views (from `execution/view_techniques.md`, source S1 "Why Your Views STOP After 48 Hours"):** ACTIVE RULES
   (trend first, stay in niche, retention, honest click-worthy titles) are appended to the Gemini instructions by
   `brain.view_rules()`. The Scout ranks sources by views per hour and skips other-language sources (other scripts,
@@ -103,7 +115,7 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
     picks a pose per sentence (`sentence_timings` from Agent 3), `mouth_track` opens the mouth on loud frames.
     Voiced intro (long videos) and outro: she flies through a cloud sky (`FlyingSky`) and speaks `intro_line` /
     `outro_line` (BRAIN.md) in the channel voice via expressive_voice, mixed with wind, whoosh and chime made by
-    FFmpeg (`effect_sources`); about 6 s each, ~1 min each to render. Shorts get a swoop-in, not the intro.
+    FFmpeg (`effect_sources`); about 6 s each, ~1 min each to render. Shorts also play the intro (`intro_shorts`).
     Character: the owner wants the real character from their reference image (green/light-blue suit, "WS" logo,
     dark hair with green streaks, gold belt; copy in Google Drive `YouTube_Auto/wondersprout_preview/`). The
     Gemini key's free tier has no image generation (limit 0), so the owner makes 9 poses by hand
@@ -172,9 +184,38 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
      tasks go under "Not automated yet". Mark the entry "reviewed" with a → verdict per technique.
   4. Then the usual checks (--check, setup_project.py, 3.11 syntax, tests) and tell the owner what changed.
 
-## Status and open items (as of 2026-10-24)
-- **Shipped on `main`** (newest first): WonderSprout's real character, intro/outro and stricter footage matching
-  (this commit); `8fba579` WonderSprout host, Frontline real photos, lazy YouTube searches; `b0e5164` real footage,
+## Status and context for next session (as of 2026-10-31)
+- **Immediate owner priority (CRITICAL FOR NEXT SESSION):**
+  - **Video clips are still bad:** The owner explicitly noted *"the video clips are still bad"*. Pixabay stock search frequently returns generic, low-interest or poorly matched clips. The next agent/session must focus heavily on improving visual quality, clip matching, or alternative footage sources/curation for kids entertainment.
+  - **Video length requirement:** Kids long videos must be **at least 5 to 7 minutes** without lagging.
+  - **Two approved approaches:**
+    1. *Approach 1 (Interactive Animal Mystery Show):* 5 fast-paced rounds (~60-75s each) with 2 clues, 3-second countdown (`[TICK]`), answer reveal (`[TADA] [CHEER]`), and an animal superpower fact (`[DING]`). Documented in `BRAIN.md`.
+    2. *Approach 2 (Trending Kids Content):* Curating popular trending kids concepts and using transformative commentary/fair use to prevent copyright claims.
+       Not built. Caution: fair use is not a defence YouTube applies automatically; reusing others' kids clips risks
+       Content ID claims and "reused content" demonetisation, and a Made for Kids channel gets stricter review. Only the
+       topic should come from trending videos (as today), never their footage, characters or songs.
+- **Completed and verified on 2026-10-31:**
+  - **Audio soundtrack & cartoon SFX:** Added Creative Commons BGM (`assets/audio/kids_bgm/`) and 8 cartoon sound effects (`assets/audio/kids_sfx/`). `expressive_voice.py` parses script cues (`[BOING]`, `[POP]`, `[TICK]`, `[TADA]`, `[CHEER]`, `[WHOOSH]`, etc.) into `sfx_cues` for the editor.
+  - **Review fixes (2026-10-31, before merging):** tags are never spoken (tag-only sentences are skipped; the one-pass
+    fallback strips them; `generated_script` is stored without them); a cue plays where its tag sits in the sentence and
+    repeats are 0.6 s apart; spoken sound words match whole words only ("holding" no longer fires `ding`); music and
+    SFX apply to any `made_for_kids` channel, not just the key `kids_edu`; tracks rotate per video.
+  - **Description credits (owner's decision, 2026-10-31):** only real Wikimedia Commons footage is credited
+    (`credit_block`: author, licence, link; in practice Frontline). No Pixabay/Pexels, "Commentary produced by" or
+    music lines; kids descriptions are text + hashtags. Risk the owner accepted: both BGM tracks look like CC BY
+    (Happy Ukulele by Jason Shaw per its tags; carefree.mp3 likely Kevin MacLeod's "Carefree"), which asks for
+    attribution; safer option offered: music that needs no credit (e.g. Pixabay Music).
+  - **Broadcast audio leveling standard:** Calibrated to uniform **-20.0 dB mean** (±0.5 dB) across intro, narration, and outro. Hero clips are attenuated with `volume=0.28` (raw clips peak at 0 dBFS, -9.1 dB mean). FFmpeg `amix` MUST use `:normalize=0` with voiceover at `volume=1.15` (without `:normalize=0`, FFmpeg suppresses narration down to -34 dB).
+  - **Reference test video:** Verified at `H:\My Drive\YouTube_Auto\2026-10-31\upload\final_kids_edu_ic2S-zIJBI0_leveled.mp4` (intro: -20.0 dB, narration: -20.5 dB, outro: -20.2 dB).
+  - **Hero entry on Shorts:** `intro_shorts: true` in `BRAIN.md` (owner's choice, kept after review): the WonderSprout
+    intro clip (~7.6 s) plays at the start of Shorts. Watch Shorts retention in Studio.
+  - **Footage style:** Set `footage_style: "film"` in `execution/questions.yaml`: real-life Pixabay stock only (no cartoon
+    clips or cartoon illustrations), matching the new "real animals" scripts.
+  - **Validation:** `execution.py --check` passes cleanly; `setup_project.py` is re-packed.
+
+## Historical status and run history
+- **Shipped on `main`** (newest first): audio leveling, kids BGM and SFX cues, animal game-show scripts (2026-10-31);
+  `8ca9d2f` WonderSprout's real character, intro/outro and stricter footage matching; `8fba579` WonderSprout host, Frontline real photos, lazy YouTube searches; `b0e5164` real footage,
   expressive voices (Ava, Brian), faster cuts, trending hashtags, kids 3 long + 2 Shorts; `e426569` view techniques,
   Analyst, `--learn`, Groq backup; `0736318` / `f0f8d7e` three runs a day, Telegram, title fallback.
 - **Run history:**

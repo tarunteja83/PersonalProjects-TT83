@@ -9,6 +9,7 @@ token_*.json
 *.wav
 # ...except WonderSprout's intro and outro, which every GitHub run needs
 !assets/wondersprout/*.mp4
+!assets/audio/**
 GDrive_Mount/
 __pycache__/
 venv/

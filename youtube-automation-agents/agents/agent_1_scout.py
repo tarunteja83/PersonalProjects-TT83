@@ -5,6 +5,8 @@ import json
 import random
 import unicodedata
 from datetime import datetime, timedelta, timezone
+
+import requests
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
@@ -33,6 +35,9 @@ GENERIC_HASHTAGS = {"#shorts", "#short", "#viral", "#trending", "#trend", "#yout
                     "#usashorts", "#viralshort", "#trendingshorts", "#feed", "#reel"}
 TRENDING_POOL = 15
 TRENDING_KEEP = 8
+# Search phrases handed to the script AI and the upload tags: rising videos' keyword tags and YouTube's autocomplete
+KEYWORDS_KEEP = 10
+SUGGESTIONS_KEEP = 8
 
 
 def trending_hashtags(videos, now=None):
@@ -56,6 +61,56 @@ def trending_hashtags(videos, now=None):
             weights[key] = weights.get(key, 0) + 1 + speed
             spelling.setdefault(key, tag)
     return [spelling[k] for k in sorted(weights, key=lambda k: -weights[k])[:TRENDING_KEEP]]
+
+
+def trending_keywords(videos):
+    """The keyword tags (YouTube's hidden search tags) the fastest-rising videos use, weighted by views per hour.
+
+    Same pool and filters as trending_hashtags; single words and very long tags are left out, since search
+    phrases of 2 to 6 words are what viewers type.
+    """
+    weights, spelling = {}, {}
+    for video, speed in sorted(videos, key=lambda v: -v[1])[:TRENDING_POOL]:
+        snippet = video["snippet"]
+        brand = re.sub(r"\W", "", snippet.get("channelTitle", "").lower())
+        for tag in dict.fromkeys(t.strip() for t in snippet.get("tags") or []):
+            key = " ".join(tag.lower().split())
+            if (not 2 <= len(key.split()) <= 6 or len(key) > 50 or "#" + key.replace(" ", "") in GENERIC_HASHTAGS
+                    or not all(is_latin(c) for c in key if c.isalpha())
+                    or (brand and brand in key.replace(" ", ""))):
+                continue
+            weights[key] = weights.get(key, 0) + 1 + speed
+            spelling.setdefault(key, key)
+    return [spelling[k] for k in sorted(weights, key=lambda k: -weights[k])[:KEYWORDS_KEEP]]
+
+
+def search_suggestions(phrase, language="English"):
+    """What people type into YouTube search starting with this phrase (YouTube's autocomplete), or [].
+
+    Free and outside the YouTube Data API quota; it's an unofficial endpoint, so any failure just means no
+    suggestions.
+    """
+    words = re.sub(r"#\w+", "", phrase).split()
+    # A long phrase gets few suggestions, so its first three words are asked too
+    queries = [" ".join(words)] + ([" ".join(words[:3])] if len(words) > 3 else [])
+    other_languages = OTHER_LANGUAGES - {language.lower()}
+    found = []
+    for query in filter(None, queries):
+        try:
+            reply = requests.get("https://suggestqueries.google.com/complete/search",
+                                 params={"client": "firefox", "ds": "yt", "q": query,
+                                         "hl": LANGUAGE_CODES.get(language, "en")}, timeout=10)
+            reply.raise_for_status()
+            suggestions = reply.json()[1]
+        except Exception as e:
+            print(f"[Agent 1: Scout] No search suggestions for '{query}' ({str(e)[:80]})")
+            continue
+        # "... in hindi" or "... news tamil" is another language's audience
+        found += [s for s in suggestions if isinstance(s, str) and s.lower() not in queries
+                  and not set(s.lower().split()) & other_languages]
+        if len(found) >= SUGGESTIONS_KEEP // 2:
+            break
+    return list(dict.fromkeys(found))[:SUGGESTIONS_KEEP]
 
 
 def is_latin(char):
@@ -105,6 +160,7 @@ class TrendScoutAgent:
         self.profile = config["profiles"][self.active_key]
         self.manifest_path = config["storage_paths"]["manifest_file"]
         self.search_cache = {}
+        self.suggestion_cache = {}
         self.out_of_searches = False
 
         api_key = os.getenv("YOUTUBE_API_KEY")
@@ -144,6 +200,12 @@ class TrendScoutAgent:
             self.search_cache[query] = self.rank(found)
         return self.search_cache[query]
 
+    def suggestions(self, query):
+        # Cached per run, like the searches
+        if query not in self.suggestion_cache:
+            self.suggestion_cache[query] = search_suggestions(query, self.profile.get("language", "English"))
+        return self.suggestion_cache[query]
+
     def rank(self, items):
         """Rising videos first (views per hour), in the channel's language first; costs 1 quota unit per 50 videos."""
         details = {}
@@ -162,9 +224,10 @@ class TrendScoutAgent:
             ranked.append(item)
             if item["language_ok"]:
                 pool.append((video, item["views_per_hour"]))
-        tags = trending_hashtags(pool)
+        tags, keywords = trending_hashtags(pool), trending_keywords(pool)
         for item in ranked:
             item["trending_hashtags"] = tags
+            item["trending_keywords"] = keywords
         return sorted(ranked, key=lambda i: (not i["language_ok"], -i["views_per_hour"]))
 
     def run(self, limit=None):
@@ -258,6 +321,8 @@ class TrendScoutAgent:
             "source_views_per_hour": item.get("views_per_hour"),
             # What the fastest-rising videos on this search are tagged with right now
             "trending_hashtags": item.get("trending_hashtags") or [],
+            # Search phrases viewers type for this niche: YouTube's autocomplete, then rising videos' keyword tags
+            "search_keywords": list(dict.fromkeys(self.suggestions(query) + (item.get("trending_keywords") or []))),
             # The search API returns HTML-escaped text (e.g. &#39; and &amp;)
             "original_title": html.unescape(item["snippet"]["title"]),
             "original_description": html.unescape(item["snippet"]["description"]),

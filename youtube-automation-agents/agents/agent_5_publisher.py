@@ -21,6 +21,10 @@ UPLOAD_RETRIES = 5
 PASSED_SLOT_GAP = timedelta(minutes=30)
 MAX_HASHTAGS = 12
 MAX_DESCRIPTION = 4900
+# Words too general to make a search phrase relevant to a video on their own (without a final "s", as compared:
+# "kids" -> "kid", "this" -> "thi", "news" -> "new")
+KEYWORD_FILLER = {"kid", "children", "short", "video", "with", "from", "thi", "that", "what", "your", "new",
+                  "today", "latest", "best", "funny", "story", "fact", "update"}
 
 class PublisherAgent:
     def __init__(self, config, instructions):
@@ -86,13 +90,12 @@ class PublisherAgent:
         return title, " ".join(sentences[:2])[:400]
 
     def generate_seo_package(self, item):
-        clean_creator_name = item["original_creator"].replace("@", "").strip()
         max_title = 75 if item.get("format") == "long" else 65
         if item.get("seo_title"):
             # Written together with the script, so no extra Gemini request is needed
             new_title = item["seo_title"].replace('"', '').strip()[:max_title]
             return new_title, self.finish_description(item, item.get("seo_description") or "",
-                                                      item.get("seo_hashtags") or "", clean_creator_name)
+                                                      item.get("seo_hashtags") or "")
 
         prompt = (
             f"Follow these system instructions: {self.instructions}\n"
@@ -121,7 +124,7 @@ class PublisherAgent:
         # Gemini's hashtags may sit inside the text; gather them so they are merged with the trending ones
         gemini_tags = " ".join(re.findall(r"#\w+", seo_body))
         seo_body = "\n".join(line for line in seo_body.splitlines() if not re.fullmatch(r"(\s*#\w+)+\s*", line))
-        return new_title, self.finish_description(item, seo_body.strip(), gemini_tags, clean_creator_name)
+        return new_title, self.finish_description(item, seo_body.strip(), gemini_tags)
 
     def hashtags(self, item, gemini_tags):
         """Hashtags for reach: what is trending in the niche right now, the video's own topic, and the source's.
@@ -149,57 +152,64 @@ class PublisherAgent:
             unique.setdefault(tag.lower(), tag)
         return list(unique.values())[:MAX_HASHTAGS]
 
+    @staticmethod
+    def relevant_keywords(item):
+        """The Scout's search phrases (autocomplete, rising videos' tags) that are about this video.
+
+        A phrase is kept only when every word of 4+ letters in it (besides general ones like "kids") is in the
+        video's title, keywords, hashtags or script, so the tags never promise something the video isn't about
+        and never carry other channels' names.
+        """
+        def words(text):
+            return {w.rstrip("s") for w in re.findall(r"\w{4,}", text.lower())} - KEYWORD_FILLER
+
+        own = words(" ".join([item.get("seo_title") or "", item.get("seo_keyword") or "",
+                              " ".join(item.get("seo_keywords") or []), item.get("seo_hashtags") or "",
+                              item.get("generated_script") or ""]))
+        return [k for k in item.get("search_keywords") or [] if words(k) and words(k) <= own]
+
     def search_tags(self, item):
-        """YouTube's hidden search tags: the hashtags as words, the footage topic terms and the channel name."""
-        tags = [t.lstrip("#") for t in item.get("upload_hashtags") or []] + list(item.get("topic_terms") or []) + \
+        """YouTube's hidden search tags, strongest first: the video's search keyword and its variations, the real
+        search phrases that fit it, the hashtags as words, the footage topic terms and the channel name."""
+        keyword = [item["seo_keyword"]] if item.get("seo_keyword") else []
+        tags = keyword + list(item.get("seo_keywords") or []) + self.relevant_keywords(item) + \
+            [t.lstrip("#") for t in item.get("upload_hashtags") or []] + list(item.get("topic_terms") or []) + \
             [self.profile["channel_name"].replace(" ", "")]
-        kept, length = [], 0
-        for tag in dict.fromkeys(t.strip() for t in tags if t.strip()):
-            # YouTube rejects the upload if the tags add up to more than 500 characters
+        kept, seen, length = [], set(), 0
+        # YouTube rejects tags with < or > and splits them at commas
+        for tag in (" ".join(re.sub(r"[<>,]", " ", t).split()) for t in tags):
+            if not tag or tag.lower() in seen:
+                continue
+            # YouTube rejects the upload if the tags add up to more than 500 characters; shorter ones may still fit
             if length + len(tag) + 3 > 450:
-                break
+                continue
+            seen.add(tag.lower())
             kept.append(tag)
             length += len(tag) + 3
         return kept
 
-    def finish_description(self, item, text, gemini_tags, clean_creator_name):
+    def finish_description(self, item, text, gemini_tags):
         tags = self.hashtags(item, gemini_tags)
         item["upload_hashtags"] = tags
-        credit = self.credit_block(item, clean_creator_name)
-        # YouTube rejects descriptions over 5,000 characters: shorten the AI text, never the credits
+        credit = self.credit_block(item)
+        # YouTube rejects descriptions over 5,000 characters: shorten the AI text, never the hashtags or credits
         room = MAX_DESCRIPTION - len(credit) - len(" ".join(tags)) - 4
         if len(text) > room:
             text = text[:max(room - 3, 0)].rstrip() + "..."
         return "\n\n".join(p for p in (text, " ".join(tags)) if p) + credit
 
-    def credit_block(self, item, clean_creator_name):
-        sources = item.get("footage_sources")
-        if item.get("footage_paths") and sources:
-            lines = ["", "", "---"]
-            if sources.get(COMMONS_SITE):
-                # CC BY asks for the author, the licence and a link; public domain clips are credited too
-                lines.append("Real footage and photos via Wikimedia Commons (free licences):")
-                lines += [f"- {credit}" for credit in sources[COMMONS_SITE]]
-            for site, names in sources.items():
-                if site != COMMONS_SITE:
-                    link = {"Pixabay": "https://pixabay.com", "Pexels": "https://www.pexels.com"}.get(site, "")
-                    lines.append(f"Stock footage: {site} ({link}), videos by {', '.join(names)}")
-            lines.append(f"Commentary produced by {self.profile['channel_name']}.")
-            return "\n".join(lines)
-        if item.get("footage_paths"):
-            # Pixabay and Pexels ask that you show where the footage came from
-            site = {"pexels": ("Pexels", "https://www.pexels.com")}.get(item.get("footage_provider"),
-                                                                         ("Pixabay", "https://pixabay.com"))
-            return (
-                f"\n\n---\n"
-                f"Stock footage: {site[0]} ({site[1]}), videos by {', '.join(item.get('footage_credits') or [site[0]])}\n"
-                f"Commentary produced by {self.profile['channel_name']}."
-            )
-        return (
-            f"\n\n---\n"
-            f"Visual Reference & Credit: {clean_creator_name}\n"
-            f"Commentary and analysis produced by {self.profile['channel_name']} under Fair Use guidelines."
-        )
+    @staticmethod
+    def credit_block(item):
+        """Credits only for real footage and photos of the actual events (Wikimedia Commons, e.g. Frontline).
+
+        Stock sites (Pixabay, Pexels) and music get no credits section (owner's decision, 2026-10-31).
+        """
+        commons = (item.get("footage_sources") or {}).get(COMMONS_SITE) if item.get("footage_paths") else None
+        if not commons:
+            return ""
+        # CC BY asks for the author, the licence and a link; public domain clips are credited too
+        lines = ["", "", "---", "Real footage and photos via Wikimedia Commons (free licences):"]
+        return "\n".join(lines + [f"- {credit}" for credit in commons])
 
     @staticmethod
     def upload(youtube, path, body):

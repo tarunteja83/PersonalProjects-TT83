@@ -52,8 +52,11 @@ class TelegramNotifierAgent:
             url = f"https://youtube.com/{'watch?v=' if long else 'shorts/'}{yt_id}"
             title = item.get("uploaded_title") or item.get("original_title") or yt_id
             tags = " ".join(item.get("upload_hashtags") or [])
+            keyword = item.get("seo_keyword")
             lines.append(f"\n{idx}. {'🎬 Long video' if long else '📱 Short'}, {self.go_live_text(item)}\n"
-                         f"<b>{html.escape(title)}</b>\n🔗 {url}" + (f"\n🏷 {html.escape(tags)}" if tags else ""))
+                         f"<b>{html.escape(title)}</b>\n🔗 {url}"
+                         + (f"\n🔎 {html.escape(keyword)}" if keyword else "")
+                         + (f"\n🏷 {html.escape(tags)}" if tags else ""))
         if len(uploaded) < planned:
             lines.append(f"\n{planned - len(uploaded)} video(s) were not uploaded. Check the GitHub run log, "
                          "step 8, for the [Agent ...] lines explaining why.")

@@ -43,6 +43,7 @@ other people's videos; it breaks YouTube's policies and can get a channel remove
 | Fun, hooky kids stories [S2] | BRAIN.md Agent 3 instructions | Named heroes with a funny trait, a silly problem, three escalating tries, a twist; sound words; the viewer is asked something every 20 to 30 seconds. |
 | A recognisable host for kids [S2] | Agent 4, `mascot.py` | WonderSprout, a woman superhero, narrates and reacts on screen (intro, expressions, outro); a recurring character gives kids a reason to come back. |
 | Trending hashtags for reach [S2] | Agents 1 and 5 | The hashtags the fastest-rising niche videos use right now lead each description, followed by the topic's own (up to 12). |
+| Search keywords people actually type [S3] | Agents 1, 3, 5 and 7 | The Scout collects real search phrases for each niche phrase (YouTube autocomplete, free and outside the API quota; other-language ones dropped) and the keyword tags of the fastest-rising videos (already fetched, no extra quota). The script AI picks one main KEYWORD from them, puts it in the first words of the title and the first description sentence, and writes 6 close variations (same request). The upload's hidden tags lead with the keyword, its variations and the real phrases whose every word is in the video (no stuffing, no other channels' names). Telegram shows the keyword (🔎). |
 
 **Not automated yet (owner):**
 - Custom thumbnails strongly affect click-through, but YouTube only allows them on phone-verified channels
@@ -95,3 +96,20 @@ other people's videos; it breaks YouTube's policies and can get a channel remove
    → Adopted: new kids writing rules; WonderSprout moved to 3 long videos and 2 Shorts a day (was 2 and 6).
 4. **More reach from trending hashtags** in each niche.
    → Adopted: trending niche hashtags first in every description.
+
+### S3. Owner's observation: keywords plus hashtags (2026-10-31)
+- Source: the owner saw a video on Instagram or YouTube (link not kept) showing that videos reach more people when
+  they use proper search keywords together with hashtags.
+- Status: reviewed
+
+**What it teaches:**
+1. **Use the words people actually search**, not only hashtags: YouTube matches searches against the title,
+   description and tags.
+   → Adopted: real search phrases (YouTube autocomplete and rising videos' keyword tags) go to the script AI, which
+   puts one main keyword in the title's first words and the first description sentence (ACTIVE RULE 4 already asked
+   for this; now it has real data instead of a guess).
+2. **Keywords and hashtags together.**
+   → Adopted: the hidden upload tags lead with the keyword and its variations; the trending hashtags are unchanged.
+3. Rejected: keyword stuffing (lists of keywords in the description, unrelated popular phrases or other channels'
+   names in tags). It's against YouTube's spam and misleading-metadata policies; only phrases the video is about are
+   used.
