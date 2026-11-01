@@ -51,7 +51,9 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
   first book The Hound of the Baskervilles (owner preferred Jungle Book; trend reasoning chose Hound, Jungle Book
   later side by side); one episode a day of 5 to 10 min, live 15:00 IST with a teaser Short at 15:00; chapters over
   4,000 words become two parts; a chapter under ~5 min is NOT merged, that day gets two videos; condensed faithful
-  retelling; a picture for every sentence ("strict rule"), pencil sketch style (`picture_style: color` exists; the
+  retelling; a picture for every sentence was the first "strict rule", changed by the owner on 2026-11-01 to one
+  picture per scene of 2 to 3 sentences (`lines_per_picture: 3`, option B; the free allowance covers only ~40 to
+  60 pictures a day; Workers Paid at ~$7 to $10 a month was the alternative), pencil sketch style (`picture_style: color` exists; the
   owner asked for a future "colour animation of the pencil pictures" option: archived pictures + prompts are kept
   for it, nothing built yet: free text-to-image can't recolour the same drawing consistently); a voice per
   character by gender/age; spoken viewer-discretion card for violence, sexual themes, alcohol/drugs, language,

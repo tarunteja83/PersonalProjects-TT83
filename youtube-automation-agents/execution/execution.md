@@ -353,9 +353,9 @@ IST) one illustrated episode of 5 to 10 minutes goes live, with a teaser Short a
 | Episodes | One episode per chapter. A chapter over `split_words` (BRAIN.md `story:`) becomes Part 1 and Part 2. A chapter too short for 5 minutes is never merged: that day gets two videos. |
 | Script | One AI request: a faithful condensed retelling (about 1,000 to 1,350 words), one sentence per line, each with its speaker and a picture description, a hook, a "Previously" line, the cliffhanger, content warnings, the teaser lines, title and description. |
 | Voices | The narrator (`voice`) and a voice per character, chosen by gender and age and kept for the whole book (`characters.json`). |
-| Pictures | One pencil sketch per sentence (Cloudflare Workers AI, free daily allowance), each character drawn from the same description every time. Gemini checks them in batches of 10 against their sentences (and for stray writing); failures are drawn again. |
+| Pictures | One pencil sketch per scene of 2 to 3 sentences (`lines_per_picture` in BRAIN.md; about 35 to 50 an episode, which fits Cloudflare's free daily allowance of roughly 40 to 60), each character drawn from the same description every time. Gemini checks them in batches of 10 against their scenes (and for stray writing); failures are drawn again. |
 | Warnings | If the chapter has violence, sexual themes, alcohol or drug use, strong language or frightening scenes, the episode opens with a spoken "viewer discretion" card and the description says so. Explicit passages are toned down, never narrated explicitly. |
-| Video | A book page per sentence: the picture with a slow zoom, the sentence beside it (the speaker's name above dialogue), a title card, the end card. The teaser Short reuses the episode's most gripping lines with a hook on screen. |
+| Video | A book page per sentence: the scene's picture with a slow zoom that continues across the scene, the sentence beside it (the speaker's name above dialogue), a title card, the end card. The teaser Short reuses the episode's most gripping lines with a hook on screen. |
 | Upload | Scheduled for 15:00, added to the book's playlist (created automatically), custom thumbnail, the Short linking to the episode. |
 
 **Made a day ahead.** Each run (06:00, 13:00, 17:00) makes any episode due by tomorrow. If the free picture allowance

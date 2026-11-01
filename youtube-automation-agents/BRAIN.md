@@ -57,8 +57,10 @@ story:
   short_chapter_words: 725      # under about 5 minutes: never merged, its day gets a second video instead
   check_pictures: true          # Gemini compares every picture with its sentence; failures are drawn again
   pictures_per_check: 10        # pictures per Gemini request
-  picture_attempts: 3           # drawings per sentence before a last try with a simpler prompt
+  picture_attempts: 3           # drawings per picture before a last try with a simpler prompt
   make_ahead_days: 1            # episodes are made this many days before they go live
+  lines_per_picture: 3          # one picture per scene of 2 to 3 sentences (~35 to 50 an episode; the free daily
+                                # allowance covers ~40 to 60 pictures: about 245 neurons each, measured 2026-10-31)
 
 editing_rules:
   zoom_factor: 1.06

@@ -10,7 +10,8 @@ For each episode:
      picture description; plus hook, recap, cliffhanger, content warnings, teaser lines, title and description.
   3. Voices: the narrator and a voice per character, matched to gender and age (characters.json, kept for the
      whole book).
-  4. Pictures: one per line, drawn by Cloudflare Workers AI (FLUX) in the channel's picture_style, characters
+  4. Pictures: one per scene of up to story.lines_per_picture sentences (owner's choice on 2026-11-01, so an episode
+     fits the free daily allowance), drawn by Cloudflare Workers AI (FLUX) in the channel's picture_style, characters
      described the same way in every prompt. Gemini checks them in batches against their lines (and for stray
      writing); failures are drawn again. The free daily picture allowance can run out mid-episode: the work is kept
      and the next run continues, which is why episodes are made a day ahead.
@@ -57,6 +58,7 @@ DEFAULTS = {
     "pictures_per_check": 10,
     "picture_attempts": 3,
     "make_ahead_days": 1,
+    "lines_per_picture": 3,
 }
 # The narration's pace at voice_speed -5%, measured on edge-tts English voices
 WORDS_PER_MINUTE = 145
@@ -293,6 +295,37 @@ def plan_episodes(chapters, split_words, short_words):
     return episodes
 
 
+def group_scenes(lines, size):
+    """Give consecutive lines one shared picture: each line gets "scene", the index of the line whose picture it shows.
+
+    A scene is at most `size` lines and never crosses a card or a change of kind (hook, recap, story, next). A script
+    written for scenes has a picture only on each scene's first line, and those starts are kept; an older script with
+    a picture on every line is grouped every `size` lines. Lines inside a scene lose their own picture.
+    """
+    spoken = [line for line in lines if not line.get("card")]
+    for_scenes = sum(1 for line in spoken if line.get("picture")) < 0.8 * max(1, len(spoken))
+    start, count, kind = None, 0, None
+    for index, line in enumerate(lines):
+        if line.get("card"):
+            line["scene"], start = None, None
+            continue
+        new = (start is None or line["kind"] != kind or count >= size
+               or (for_scenes and line.get("picture") and count >= 2))
+        if new:
+            start, count, kind = index, 0, line["kind"]
+            line["picture"] = line.get("picture") or line["text"]
+        elif index != start:
+            line["picture"] = None
+        line["scene"] = start
+        count += 1
+    return lines
+
+
+def scene_text(lines, start):
+    """The sentences a scene's picture has to show."""
+    return " ".join(line["text"] for line in lines if line.get("scene") == start)
+
+
 def episode_label(ep):
     return f"Chapter {ep['chapter']}" + (f", Part {ep['part']}" if ep["parts"] > 1 else "")
 
@@ -471,11 +504,13 @@ class StoryChannel:
                                                     "episode") + ".\n"
             "- Every line is ONE sentence of 5 to 30 words.\n"
             "- Explicit sexual content and graphic gore are told the way a careful narrator would, never explicitly.\n"
-            "- picture: one illustration that shows exactly what the line says: which characters (by their exact "
-            "name), doing what, where, the key objects, the framing (close-up, medium shot or wide shot). For a "
-            "line with no action (a thought, a feeling), show the speaker's face and mood or the place it happens. "
-            "Never ask for writing, letters, signs, labels or numbers in the picture, and never gore, nudity or "
-            "sexual content.\n"
+            f"- Pictures: group consecutive lines into scenes of 2 or 3 lines (up to {self.tune['lines_per_picture']}"
+            "; one line only for a hook line or a big moment). Give \"picture\" ONLY on the first line of each scene "
+            "and leave it empty (\"\") on the other lines. The picture is one illustration that shows the whole "
+            "scene: which characters (by their exact name), doing what, where, the key objects, the framing "
+            "(close-up, medium shot or wide shot). For a scene of talk or thought, show the speakers' faces and mood "
+            "or the place it happens. Never ask for writing, letters, signs, labels or numbers in the picture, and "
+            "never gore, nudity or sexual content.\n"
             "- Describe every new character and place in new_characters / new_places (appearance and clothes in "
             "the book's period, so every picture draws them the same way).\n"
             + (f"- {feedback}\n" if feedback else "")
@@ -483,7 +518,7 @@ class StoryChannel:
             "Reply with ONLY this JSON:\n"
             "{\n"
             '  "lines": [{"kind": "hook|recap|story|next", "speaker": "narrator or the character\'s exact name", '
-            '"text": "one sentence", "picture": "the illustration"}],\n'
+            '"text": "one sentence", "picture": "the scene illustration, or empty inside a scene"}],\n'
             '  "new_characters": [{"name": "", "gender": "male|female", "age": "child|young|adult|old", '
             '"look": "face, hair, build, clothes"}],\n'
             '  "new_places": [{"name": "", "look": "what it looks like"}],\n'
@@ -550,7 +585,7 @@ class StoryChannel:
             text = " ".join(str(line.get("text", "")).split())
             if text:
                 story.append({"n": n, "kind": line.get("kind") or "story", "speaker": line.get("speaker") or "narrator",
-                              "text": text, "picture": str(line.get("picture") or text)})
+                              "text": text, "picture": str(line.get("picture") or "").strip()})
         warnings = {k: v for k, v in (reply.get("warnings") or {}).items()
                     if k in WARNING_NAMES and v in ("mild",) + CARD_LEVELS}
         cards = []
@@ -566,6 +601,7 @@ class StoryChannel:
         # Warning first, then the hook and recap, then the title card, then the story
         opening = [line for line in story if line["kind"] in ("hook", "recap")]
         lines = cards + opening + [title] + [line for line in story if line["kind"] not in ("hook", "recap")]
+        group_scenes(lines, int(self.tune["lines_per_picture"]))
         return {"episode": ep["key"], "lines": lines, "warnings": warnings,
                 "teaser": reply.get("teaser") or {}, "short_title": reply.get("short_title") or "",
                 "description": reply.get("description") or "", "summary": reply.get("summary") or "",
@@ -635,11 +671,11 @@ class StoryChannel:
 
     # ----- 3. pictures -----
 
-    def picture_prompt(self, line, wording=0):
+    def picture_prompt(self, line, wording=0, text_of_scene=None):
         """wording 0: the script's picture description with every character's look; 1: the description alone;
         2: the sentence itself (plainer wordings get past the picture service's over-eager safety filter)."""
         sheet = self.book["characters"]
-        text = line["text"] if wording >= 2 else line["picture"]
+        text = (text_of_scene or line["text"]) if wording >= 2 else line["picture"]
         if wording:
             return f"{text}, {PICTURE_STYLES[self.settings['picture_style']]}"[:2000]
         described = set()
@@ -684,12 +720,12 @@ class StoryChannel:
                 buffer = io.BytesIO()
                 small.save(buffer, "JPEG", quality=80)
                 pictures.append((f"Picture {index}:", buffer.getvalue()))
-            numbered.append(f"Picture {index}: {script['lines'][index]['text']}")
+            numbered.append(f"Picture {index}: {scene_text(script['lines'], index)}")
         style = "pencil sketch" if self.settings["picture_style"] == "pencil" else "storybook illustration"
         prompt = (
-            f"These pictures illustrate an audiobook of \"{self.book['title']}\", one picture per sentence.\n"
-            f"Characters and places:\n{sheet}\n\nThe sentence each picture must show:\n" + "\n".join(numbered) +
-            "\n\nA picture FAILS when: it does not clearly show the sentence's main subject and action (wrong person, "
+            f"These pictures illustrate an audiobook of \"{self.book['title']}\", one picture per short scene.\n"
+            f"Characters and places:\n{sheet}\n\nThe scene each picture must show:\n" + "\n".join(numbered) +
+            "\n\nA picture FAILS when: it does not clearly show the scene's main subject and action (wrong person, "
             "wrong number of people, wrong gender, wrong place, a key object missing or wrong); it contains visible "
             "writing, letters, numbers, a signature or a logo; it shows gore, nudity or sexual content; or it is not "
             f"a {style}. Small artistic differences are fine.\n"
@@ -730,7 +766,8 @@ class StoryChannel:
                     data = None
                     for wording in range(wording, 3):
                         try:
-                            data = self.draw_picture(self.picture_prompt(script["lines"][index], wording))
+                            data = self.draw_picture(self.picture_prompt(
+                                script["lines"][index], wording, scene_text(script["lines"], index)))
                             break
                         except PromptRefused:
                             print(f"[Story] Picture {index}: the safety filter refused the wording; trying a plainer one")
@@ -859,8 +896,9 @@ class StoryChannel:
             draw_block(draw, lines, font, lh, 70, 1530, 940, INK, "center")
         return image, box
 
-    def segment(self, work, index, background, picture, box, seconds):
-        """One line's clip: the page, with the picture slowly zooming in its box (or a still card)."""
+    def segment(self, work, index, background, picture, box, seconds, zoom=(1.0, 1.07)):
+        """One line's clip: the page, with the picture slowly zooming in its box from zoom[0] to zoom[1] (a scene's
+        lines continue one zoom), or a still card."""
         bg_path = os.path.join(work, f"bg{index:03d}.png")
         background.save(bg_path)
         out = os.path.join(work, f"seg{index:03d}.mp4")
@@ -874,11 +912,28 @@ class StoryChannel:
         # Drawn at twice the size and zoomed down, so the slow zoom doesn't jitter
         picture.resize((side * 2, side * 2), Image.LANCZOS).save(pic_path)
         frames = max(1, int(seconds * FPS) + 1)
-        zoom = (f"zoompan=z='1+0.07*on/{frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}"
-                f":s={side}x{side}:fps={FPS}")
+        zoom = (f"zoompan=z='{zoom[0]:.5f}+{zoom[1] - zoom[0]:.5f}*on/{frames}':x='iw/2-(iw/zoom/2)'"
+                f":y='ih/2-(ih/zoom/2)':d={frames}:s={side}x{side}:fps={FPS}")
         ffmpeg("-loop", "1", "-framerate", str(FPS), "-i", bg_path, "-i", pic_path, "-filter_complex",
                f"[1:v]{zoom}[p];[0:v][p]overlay={x}:{y}:shortest=1,setsar=1", *encode)
         return out
+
+    @staticmethod
+    def zooms(lines, indexes, lengths, depth=0.07):
+        """(from, to) zoom of each line, continuing across the lines that share a scene's picture."""
+        totals, done, result = {}, {}, []
+        for index, length in zip(indexes, lengths):
+            totals[lines[index].get("scene")] = totals.get(lines[index].get("scene"), 0) + length
+        for index, length in zip(indexes, lengths):
+            scene = lines[index].get("scene")
+            start = done.get(scene, 0)
+            done[scene] = start + length
+            total = totals[scene] or 1
+            result.append((1 + depth * start / total, 1 + depth * (start + length) / total))
+        return result
+
+    def scene_picture(self, folder, line, side):
+        return self.inked(os.path.join(folder, "pictures", f"{line['scene']:03d}.jpg"), side)
 
     def finish_video(self, work, segments, audio, out, size, seconds):
         """Join the clips, add the soundtrack, watermark and the end card."""
@@ -919,13 +974,14 @@ class StoryChannel:
         try:
             segments = []
             lengths = frame_lengths([0.0] + starts[1:] + [seconds])
+            zooms = self.zooms(script["lines"], range(len(lengths)), lengths)
             for index, line in enumerate(script["lines"]):
                 if line.get("card"):
                     background, picture, box = self.card_frame(line, ep, LONG_SIZE), None, None
                 else:
                     background, box = self.long_layout(line, ep)
-                    picture = self.inked(os.path.join(folder, "pictures", f"{index:03d}.jpg"), box[2])
-                segments.append(self.segment(work, index, background, picture, box, lengths[index]))
+                    picture = self.scene_picture(folder, line, box[2])
+                segments.append(self.segment(work, index, background, picture, box, lengths[index], zooms[index]))
             self.finish_video(work, segments, os.path.join(folder, "narration.mp3"), out, LONG_SIZE, sum(lengths))
         finally:
             shutil.rmtree(work, ignore_errors=True)
@@ -971,12 +1027,13 @@ class StoryChannel:
                    "-c:a", "aac", audio)
             segments = []
             lengths = frame_lengths([starts[i] for i in range(first, last + 1)] + [t1])
-            for index, length in zip(range(first, last + 1), lengths):
+            zooms = self.zooms(script["lines"], range(first, last + 1), lengths)
+            for index, length, zoom in zip(range(first, last + 1), lengths, zooms):
                 background, box = self.short_layout(script["lines"][index], ep, hook)
-                picture = self.inked(os.path.join(folder, "pictures", f"{index:03d}.jpg"), box[2])
-                segments.append(self.segment(work, index, background, picture, box, length))
+                picture = self.scene_picture(folder, script["lines"][index], box[2])
+                segments.append(self.segment(work, index, background, picture, box, length, zoom))
             background, box = self.short_layout(None, ep, f"{episode_label(ep)}: full episode on the channel")
-            picture = self.inked(os.path.join(folder, "pictures", f"{last:03d}.jpg"), box[2])
+            picture = self.scene_picture(folder, script["lines"][last], box[2])
             closing_length = frame_lengths([0.0, closing_seconds])[0]
             segments.append(self.segment(work, 999, background, picture, box, closing_length))
             self.finish_video(work, segments, audio, out, SHORT_SIZE, sum(lengths) + closing_length)
@@ -990,7 +1047,7 @@ class StoryChannel:
         path = os.path.join(folder, "thumbnail.jpg")
         first, _ = self.teaser_range(script)
         image, draw = self.page((1280, 720))
-        image.paste(self.inked(os.path.join(folder, "pictures", f"{first:03d}.jpg"), 640), (40, 40))
+        image.paste(self.scene_picture(folder, script["lines"][first], 640), (40, 40))
         font, lines, lh = fit_text(draw, self.book["title"], 540, 260, 64, True)
         bottom = draw_block(draw, lines, font, lh, 710, 230, 540, INK)
         draw_block(draw, [f"CHAPTER {ep['chapter']}" + (f" · PART {ep['part']}" if ep["parts"] > 1 else "")],
@@ -1178,6 +1235,10 @@ class StoryChannel:
         folder = os.path.join(self.book["folder"], "episodes", ep["key"])
         os.makedirs(folder, exist_ok=True)
         script = self.write_script(ep, folder)
+        if any(line.get("scene", -1) == -1 for line in script["lines"]):
+            # Written before scenes (a picture per line): grouped now, reusing the pictures already drawn
+            group_scenes(script["lines"], int(self.tune["lines_per_picture"]))
+            write_json(os.path.join(folder, "script.json"), script)
         self.save_book()
         self.current_warnings = script.get("warnings") or {}
         self.narrate(script, folder)
