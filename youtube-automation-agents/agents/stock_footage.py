@@ -299,12 +299,25 @@ def photo_clip(url, target, seconds, orientation="landscape"):
         os.remove(image_path)
 
 
+def has_picture(path):
+    """True if the video file has at least one decodable frame."""
+    exe = shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe()
+    result = subprocess.run([exe, "-hide_banner", "-loglevel", "error", "-i", path, "-map", "0:v:0", "-frames:v", "1",
+                             "-f", "image2pipe", "-c:v", "png", "-"], capture_output=True, timeout=60)
+    return result.returncode == 0 and len(result.stdout) > 0
+
+
 def download_segment(url, target, start, seconds):
     """Fetch only `seconds` of video from `start`: FFmpeg seeks over HTTP, so long videos aren't downloaded whole."""
     exe = shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe()
     subprocess.run([exe, "-hide_banner", "-loglevel", "error", "-y", "-user_agent", COMMONS_HEADERS["User-Agent"],
                     "-ss", f"{start:.2f}", "-i", url, "-t", f"{seconds:.2f}", "-an", "-c:v", "libx264",
                     "-preset", "veryfast", "-crf", "23", target], check=True, timeout=300, capture_output=True)
+    # FFmpeg can finish "successfully" with no picture (e.g. a seek past the real end of the video); the editor then
+    # failed on that scene and the whole video was lost (31 Oct and 1 Nov runs). Stock footage is used instead.
+    if not has_picture(target):
+        os.remove(target)
+        raise ValueError("the downloaded clip has no picture")
 
 
 def segment_start(duration, seconds):

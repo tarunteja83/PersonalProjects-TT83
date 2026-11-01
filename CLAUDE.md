@@ -275,6 +275,18 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
     (NB3OQ2IEM4w, 21 s) and queued it for WonderSprout; approve/reject/queue/cancel and the Scout's request handling
     tested offline with stubs. Gemini watching a video was first confirmed on S1 (~63K tokens at low resolution).
 
+## Runs of 31 Oct / 1 Nov 2026 (first runs with Inkbound Tales)
+- Runs #44 (04:38 IST) and #45 (15:50 IST) were red: story_books uploaded 0 because Cloudflare said the free
+  allowance was used up, with 0 pictures drawn. #44 was before the 05:30 IST reset (expected), but #45 and a manual
+  test at 18:54 IST on 1 Nov were also refused although nothing of ours drew since the reset: either something else
+  uses the account (Antigravity had the .env open; owner asked to check the Cloudflare dashboard) or the window is
+  not a 00:00 UTC reset. The API token can't read usage (GraphQL "not authorized").
+- Fixed: a story episode waiting for pictures no longer fails the run (`StoryChannel.waiting`, yellow ::warning).
+- Fixed: Frontline lost one long video per run when a Commons segment download "succeeded" with no picture (seek
+  past the real end); `stock_footage.has_picture` now rejects it and the scene falls back to stock footage.
+- Chapter 1 moved to 2 Nov 15:00 (run #45 started after 15:00 on 1 Nov).
+- Step 9's rclone "directory not found" lines are old noise from deleting 02_raw_videos (harmless, `|| true`).
+
 ## Historical status and run history
 - **Shipped on `main`** (newest first): Telegram inbox (share a video or ask for one; 2026-10-31); `9aebfaf` search
   keywords, audio leveling, kids BGM and SFX cues, animal game-show scripts, description credits for Commons only;

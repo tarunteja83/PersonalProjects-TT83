@@ -505,7 +505,10 @@ def run_channels(config, instructions, keys, overrides=None, force_dry_run=False
             else:
                 results[key] = orchestrator.execute_pipeline(key, dry_run=dry_runs[key], formats=formats,
                                                              planned=planned[key])
-            if not dry_runs[key] and results[key] == 0:
+            # A book episode still waiting for its pictures (free daily allowance) is expected, not a failure: it is
+            # made a day ahead and finished by a later run
+            waiting = bool(stories.get(key) and stories[key].waiting)
+            if not dry_runs[key] and results[key] == 0 and not waiting:
                 failed.append(key)
         except Exception as e:
             print(f"\n[Error] {key} failed: {e}")
@@ -529,7 +532,10 @@ def run_channels(config, instructions, keys, overrides=None, force_dry_run=False
             print(f" {key}: test run, videos made but not uploaded")
         else:
             print(f" {key}: {results.get(key, 0)} of {planned[key]} video(s) uploaded")
-            if RUNNING_ON_GITHUB and 0 < results.get(key, 0) < planned[key]:
+            if RUNNING_ON_GITHUB and key in stories and stories[key] and stories[key].waiting:
+                print(f"::warning title={key}: waiting for pictures::{stories[key].waiting} A later run continues; "
+                      "the episode is made a day before it goes live.")
+            elif RUNNING_ON_GITHUB and 0 < results.get(key, 0) < planned[key]:
                 # Some but not all: the run stays green, with a yellow warning on its summary page
                 print(f"::warning title={key}: {results[key]} of {planned[key]} uploaded::"
                       f"{planned[key] - results[key]} video(s) were not made or uploaded. Search step 8 for "

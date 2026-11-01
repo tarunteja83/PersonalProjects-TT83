@@ -319,6 +319,8 @@ class StoryChannel:
         self.state_file = os.path.join(self.root, f"channel_{key}.json")
         self.state = read_json(self.state_file, {"last_date": None, "finished": []})
         self.book = None
+        # Why this run stopped early but will be continued by a later one (pictures still to draw or check)
+        self.waiting = ""
 
     # ----- books -----
 
@@ -1216,6 +1218,7 @@ class StoryChannel:
             if outcome == "unchecked":
                 notes.append(f"🔎 {episode_label(ep)}: the pictures are drawn; Gemini checks them in the next run.")
                 break
+        self.waiting = notes[-1] if notes else ""
         self.notify(uploaded, notes, dry_run)
         if not dry_run and self.book and all((self.book["progress"]["episodes"].get(e["key"]) or {}).get("status")
                                              == "uploaded" for e in self.book["episodes"]):
