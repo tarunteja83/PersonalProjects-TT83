@@ -288,6 +288,16 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
   past the real end); `stock_footage.has_picture` now rejects it and the scene falls back to stock footage.
 - Chapter 1 moved to 2 Nov 15:00 (run #45 started after 15:00 on 1 Nov).
 - Step 9's rclone "directory not found" lines are old noise from deleting 02_raw_videos (harmless, `|| true`).
+- 2 Nov: still no Chapter 1. Run #47 drew the pictures, but the Gemini checker kept rejecting 9 of them (mostly the
+  small artist signature FLUX puts in a corner of "sketch" pictures, and minor missing details); run #48 left one
+  (picture 104) failing, and one picture blocked the whole episode. Fixed: `clean_corners` paints out a bottom
+  corner that is blank paper with a few marks (measured: signature corners < 2% marked pixels, drawn corners 12%+);
+  the checker fails only wrong characters/place, contradictions, large readable writing, unsafe content or wrong
+  style; a picture failing every try is used anyway (`*_rejected.jpg` kept, reported in Telegram).
+- Local renders froze: temporary clips written into H:/My Drive (Drive for Desktop locked a file; FFmpeg hung on clip
+  37 for 40 min, the same command took 2.7 s on local disk). Work folders are now in the system temp folder.
+- Verified locally 2 Nov (dry run): Chapter 1 8:48 (1920x1080), teaser Short 42 s, 36 pictures all passing the new
+  check. Loudness was -21.7 dB at loudnorm -19, so the target is -17.5 LUFS (not re-measured yet).
 
 ## Historical status and run history
 - **Shipped on `main`** (newest first): Telegram inbox (share a video or ask for one; 2026-10-31); `9aebfaf` search

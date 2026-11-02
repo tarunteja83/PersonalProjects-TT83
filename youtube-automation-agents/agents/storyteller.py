@@ -295,6 +295,23 @@ def plan_episodes(chapters, split_words, short_words):
     return episodes
 
 
+def clean_corners(image):
+    """Paint out an artist's signature: the model scribbles one in a bottom corner of most "sketch" pictures. A bottom
+    corner that is almost all blank paper with a few dark strokes becomes plain paper; a corner the drawing really
+    fills (a floor, a coat) is left alone."""
+    gray = image.convert("L")
+    w, h = gray.size
+    for left in (0, int(w * 0.68)):
+        box = (left, int(h * 0.88), left + int(w * 0.32), h)
+        counts = gray.crop(box).histogram()
+        total = max(1, sum(counts))
+        # Measured on Chapter 1: a signature corner has under 2% marked pixels; real drawing 12% or more
+        marked = sum(counts[:230]) / total
+        if sum(v * n for v, n in enumerate(counts)) / total > 245 and marked < 0.04:
+            image.paste(255 if image.mode == "L" else (255, 255, 255), box)
+    return image
+
+
 def group_scenes(lines, size):
     """Give consecutive lines one shared picture: each line gets "scene", the index of the line whose picture it shows.
 
@@ -354,6 +371,8 @@ class StoryChannel:
         self.book = None
         # Why this run stopped early but will be continued by a later one (pictures still to draw or check)
         self.waiting = ""
+        # Pictures used although they failed every check (reported in Telegram)
+        self.picture_notes = []
 
     # ----- books -----
 
@@ -725,10 +744,12 @@ class StoryChannel:
         prompt = (
             f"These pictures illustrate an audiobook of \"{self.book['title']}\", one picture per short scene.\n"
             f"Characters and places:\n{sheet}\n\nThe scene each picture must show:\n" + "\n".join(numbered) +
-            "\n\nA picture FAILS when: it does not clearly show the scene's main subject and action (wrong person, "
-            "wrong number of people, wrong gender, wrong place, a key object missing or wrong); it contains visible "
-            "writing, letters, numbers, a signature or a logo; it shows gore, nudity or sexual content; or it is not "
-            f"a {style}. Small artistic differences are fine.\n"
+            "\n\nA picture only FAILS when: it shows the wrong characters (wrong person, wrong gender, clearly the "
+            "wrong number of people) or the wrong kind of place for the scene; it contradicts what happens; it has "
+            "large readable words or a logo across the picture; it shows gore, nudity or sexual content; or it is "
+            f"not a {style}. It PASSES when it fits the scene as a whole, even if small objects or details from the "
+            "sentences are missing. Ignore small scribbles, a faint signature or illegible marks in a corner (they "
+            "are removed automatically), and the look of pages in a book.\n"
             'Reply with ONLY JSON: {"fail": [{"n": picture number, "why": "short reason"}]} (an empty list when all '
             "pass)."
         )
@@ -777,7 +798,7 @@ class StoryChannel:
                     with Image.open(io.BytesIO(data)) as drawn_picture:
                         # The model sometimes adds colour to a pencil sketch: pencil pictures are kept black and white
                         mode = "L" if self.settings["picture_style"] == "pencil" else "RGB"
-                        drawn_picture.convert(mode).save(path, "JPEG", quality=90)
+                        clean_corners(drawn_picture.convert(mode)).save(path, "JPEG", quality=90)
                     entry.update(attempts=entry["attempts"] + 1, ok=None)
                     drawn += 1
             except PictureLimit as e:
@@ -808,7 +829,9 @@ class StoryChannel:
                     if index in fails:
                         entry.update(ok=False, why=fails[index])
                         print(f"[Story] Picture {index} redrawn: {fails[index]}")
-                        os.remove(os.path.join(folder, "pictures", f"{index:03d}.jpg"))
+                        # Kept: if every try fails, the last drawing is used rather than holding the episode back
+                        os.replace(os.path.join(folder, "pictures", f"{index:03d}.jpg"),
+                                   os.path.join(folder, "pictures", f"{index:03d}_rejected.jpg"))
                         redraw += 1
                     else:
                         entry["ok"] = True
@@ -817,9 +840,20 @@ class StoryChannel:
                 break
             drawn = 0
         failed = [i for i in wanted if not os.path.exists(os.path.join(folder, "pictures", f"{i:03d}.jpg"))]
+        for index in list(failed):
+            rejected = os.path.join(folder, "pictures", f"{index:03d}_rejected.jpg")
+            if os.path.exists(rejected):
+                # One stubborn picture never stops the episode (2 Nov: one picture held Chapter 1 back a day)
+                os.replace(rejected, os.path.join(folder, "pictures", f"{index:03d}.jpg"))
+                status[str(index)].update(ok=True, used_after_failing=True)
+                self.picture_notes.append(f"picture {index} ({status[str(index)].get('why', '')[:80]})")
+                failed.remove(index)
+        write_json(status_path, status)
         if failed:
-            print(f"[Story] Line(s) {failed} failed every picture check.")
+            print(f"[Story] Line(s) {failed} have no picture: every wording was refused.")
             return "failed"
+        if self.picture_notes:
+            print(f"[Story] Used after failing every check: {'; '.join(self.picture_notes)}")
         return "ready"
 
     # ----- 4. video -----
@@ -948,8 +982,8 @@ class StoryChannel:
         card = VideoEditorAgent(self.config).end_card_frames(Image.open(last).convert("RGB"))
         inputs = ["-i", montage, "-i", audio, "-i", mark]
         graph = (f"[0:v][2:v]overlay=W-w-{WATERMARK_MARGIN}:H-h-{WATERMARK_MARGIN},format=yuv420p,setsar=1[main];"
-                 # loudnorm at -19 LUFS gives the -20 dB mean of the other channels (BRAIN.md audio_mastering)
-                 f"[1:a]loudnorm=I=-19:TP=-1.5:LRA=11,aresample=44100,"
+                 # -17.5 LUFS gives about the -20 dB mean of the other channels (Chapter 1 at -19 measured -21.7 dB)
+                 f"[1:a]loudnorm=I=-17.5:TP=-1.5:LRA=11,aresample=44100,"
                  f"aformat=channel_layouts=stereo,apad,atrim=0:{seconds:.3f}[voice];")
         segs = [("[main]", "[voice]")]
         for index, (frame, seconds) in enumerate(card or []):
@@ -970,7 +1004,7 @@ class StoryChannel:
             return out
         print(f"[Story] Rendering {episode_label(ep)}...")
         starts, seconds = script["timing"]["starts"], script["timing"]["seconds"]
-        work = tempfile.mkdtemp(prefix="story_", dir=self.processed)
+        work = tempfile.mkdtemp(prefix="story_")
         try:
             segments = []
             lengths = frame_lengths([0.0] + starts[1:] + [seconds])
@@ -1015,7 +1049,7 @@ class StoryChannel:
         starts, seconds = script["timing"]["starts"], script["timing"]["seconds"]
         t0, t1 = starts[first], starts[last + 1] if last + 1 < len(starts) else seconds
         hook = (script.get("teaser") or {}).get("hook") or script.get("short_title") or self.book["title"]
-        work = tempfile.mkdtemp(prefix="teaser_", dir=self.processed)
+        work = tempfile.mkdtemp(prefix="teaser_")
         try:
             closing = os.path.join(work, "closing.mp3")
             closing_seconds, _ = expressive_voice.narrate_lines(
@@ -1312,6 +1346,8 @@ class StoryChannel:
             lines.append(f"🙋 In YouTube Studio, open the Short https://youtube.com/shorts/{short['uploaded_youtube_id']}"
                          f" → Related video → pick \"{html.escape(long['uploaded_title'][:60])}\" (only Studio can "
                          "link it).")
+        if self.picture_notes and uploaded:
+            lines.append("🖼 Used although the checker wasn't satisfied: " + html.escape("; ".join(self.picture_notes)))
         lines += notes
         if lines:
             send_telegram("\n".join(lines))
