@@ -296,6 +296,14 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
   style; a picture failing every try is used anyway (`*_rejected.jpg` kept, reported in Telegram).
 - Local renders froze: temporary clips written into H:/My Drive (Drive for Desktop locked a file; FFmpeg hung on clip
   37 for 40 min, the same command took 2.7 s on local disk). Work folders are now in the system temp folder.
+- 2 to 3 Nov DUPLICATES (my mistake): I uploaded Chapter 1 from the laptop (dgLZgTMoiOM + Short mes6p7xtpns,
+  playlist PLJDefp6dWP_k) at ~22:30 IST while GitHub run #49 (started 22:21) was running; it had pulled Story_Books
+  before my upload was saved, so it uploaded Chapter 1 again for 3 Nov 15:00 (yX-jxfHW3_g + aYVFG8Ehq0Q, playlist
+  PLKjIsnYicKpo) and its progress.json overwrote mine. **Never make a real story upload on the laptop when a GitHub
+  run may be running; trigger the workflow instead.** Fixed: uploads skip a title already among the channel's 50
+  latest uploads; an existing playlist with the same title is reused.
+- 3 Nov: Chapter 2 (6:29) waited all day because Gemini's free quota (shared with the other channels) was used up
+  for the picture check. Fixed: unchecked pictures are used (noted in Telegram) instead of holding the episode.
 - Verified locally 2 Nov (dry run): Chapter 1 8:48 (1920x1080), teaser Short 42 s, 36 pictures all passing the new
   check. Loudness was -21.7 dB at loudnorm -19, so the target is -17.5 LUFS (not re-measured yet).
 

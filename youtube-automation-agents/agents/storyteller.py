@@ -1103,7 +1103,14 @@ class StoryChannel:
         progress = self.book["progress"]
         if progress.get("playlist_id"):
             return progress["playlist_id"]
-        body = {"snippet": {"title": f"{self.book['title']} | Illustrated Audiobook (Full Story)"[:150],
+        title = f"{self.book['title']} | Illustrated Audiobook (Full Story)"[:150]
+        existing = self.youtube().playlists().list(part="snippet", mine=True, maxResults=50).execute()
+        for item in existing.get("items", []):
+            if item["snippet"]["title"] == title:
+                progress["playlist_id"] = item["id"]
+                self.save_book()
+                return item["id"]
+        body = {"snippet": {"title": title,
                             "description": f"{self.book['title']} by {self.book['author']}, told chapter by chapter "
                                            f"with pencil illustrations. Start with Chapter 1."},
                 "status": {"privacyStatus": "public"}}
@@ -1167,6 +1174,17 @@ class StoryChannel:
                 length += len(tag) + 3
         return kept
 
+    def uploaded_titles(self):
+        """{title: video id} of the channel's 50 most recent uploads (scheduled ones included)."""
+        if not hasattr(self, "_uploaded"):
+            youtube = self.youtube()
+            uploads = youtube.channels().list(part="contentDetails", mine=True).execute()["items"][0][
+                "contentDetails"]["relatedPlaylists"]["uploads"]
+            items = youtube.playlistItems().list(part="snippet", playlistId=uploads, maxResults=50).execute()
+            self._uploaded = {i["snippet"]["title"]: i["snippet"]["resourceId"]["videoId"]
+                              for i in items.get("items", [])}
+        return self._uploaded
+
     def upload_one(self, path, title, description, tags, publish_at, thumbnail=None):
         status = {"privacyStatus": self.profile["privacy_status"], "selfDeclaredMadeForKids": False,
                   "containsSyntheticMedia": self.config["upload_rules"]["synthetic_media_disclosure"]}
@@ -1177,6 +1195,10 @@ class StoryChannel:
         body = {"snippet": {"title": title, "description": description, "categoryId": self.profile["category_id"],
                             "tags": tags, "defaultLanguage": "en", "defaultAudioLanguage": "en"},
                 "status": status}
+        if not self.test and title in self.uploaded_titles():
+            # Another run (or a laptop run) already uploaded it, e.g. two runs at the same time (2 to 3 Nov)
+            print(f"[Story] '{title}' is already on the channel; not uploading it again.")
+            return self.uploaded_titles()[title]
         print(f"[Story] Uploading '{title}'" + (f", live at {status['publishAt']}" if publish_at else ""))
         self.youtube()
         response = self._publisher.upload(self._youtube, path, body)
@@ -1280,11 +1302,10 @@ class StoryChannel:
         if pictures in ("waiting", "failed"):
             return pictures, []
         if pictures == "unchecked":
-            # Checked next run, unless the episode goes live within 6 hours
-            due = day is None or self.post_at(day) - datetime.now(self.tz) < timedelta(hours=6)
-            if not due:
-                return "unchecked", []
-            print("[Story] Gemini couldn't check the pictures and the episode is due soon; using them unchecked.")
+            # Gemini's free quota is shared with the other channels and was used up on 3 Nov: the pictures (already
+            # cleaned of signatures) are used unchecked rather than holding the episode back
+            print("[Story] Gemini couldn't check the pictures (quota); using them unchecked.")
+            self.picture_notes.append("pictures not checked (Gemini's daily quota was used up)")
         long_path = self.render_episode(ep, script, folder)
         short_path = self.render_teaser(ep, script, folder) if self.settings["teaser"] else None
         if dry_run:
