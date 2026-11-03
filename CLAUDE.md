@@ -299,9 +299,11 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
 - 2 to 3 Nov DUPLICATES (my mistake): I uploaded Chapter 1 from the laptop (dgLZgTMoiOM + Short mes6p7xtpns,
   playlist PLJDefp6dWP_k) at ~22:30 IST while GitHub run #49 (started 22:21) was running; it had pulled Story_Books
   before my upload was saved, so it uploaded Chapter 1 again for 3 Nov 15:00 (yX-jxfHW3_g + aYVFG8Ehq0Q, playlist
-  PLKjIsnYicKpo) and its progress.json overwrote mine. **Never make a real story upload on the laptop when a GitHub
-  run may be running; trigger the workflow instead.** Fixed: uploads skip a title already among the channel's 50
-  latest uploads; an existing playlist with the same title is reused.
+  PLKjIsnYicKpo) and its progress.json overwrote mine. Owner: no such mistakes again, and be smart even for laptop
+  uploads. Fixed: `plan()` first runs `reconcile()` (episodes already on the channel by title count as uploaded,
+  with their date and saved summary, so the next one is picked); a laptop run doesn't upload while a GitHub run is
+  queued or in progress (`github_run_active`, GitHub API with GITHUB_TOKEN); the uploads list is re-read right
+  before each upload; an existing playlist with the same title is reused. Duplicates kept (owner: delete nothing).
 - 3 Nov: Chapter 2 (6:29) waited all day because Gemini's free quota (shared with the other channels) was used up
   for the picture check. Fixed: unchecked pictures are used (noted in Telegram) instead of holding the episode.
 - Verified locally 2 Nov (dry run): Chapter 1 8:48 (1920x1080), teaser Short 42 s, 36 pictures all passing the new

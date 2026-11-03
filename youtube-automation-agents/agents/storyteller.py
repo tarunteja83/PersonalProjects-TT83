@@ -453,6 +453,8 @@ class StoryChannel:
         book = self.current_book()
         if book is None:
             return []
+        if not self.test:
+            self.reconcile()
         done = book["progress"]["episodes"]
         waiting = [ep for ep in book["episodes"] if (done.get(ep["key"]) or {}).get("status") != "uploaded"]
         if self.test:
@@ -1174,9 +1176,65 @@ class StoryChannel:
                 length += len(tag) + 3
         return kept
 
-    def uploaded_titles(self):
+    def github_run_active(self):
+        """True if a GitHub pipeline run is queued or running; False if none; None if it can't be checked."""
+        token = os.getenv("GITHUB_TOKEN")
+        try:
+            remote = subprocess.run(["git", "remote", "get-url", "origin"], capture_output=True, text=True,
+                                    cwd=os.path.dirname(os.path.abspath(__file__))).stdout
+            repo = re.search(r"github\.com[:/](.+?)(?:\.git)?\s*$", remote).group(1)
+            for status in ("in_progress", "queued"):
+                reply = requests.get(f"https://api.github.com/repos/{repo}/actions/workflows/daily_youtube_agents.yml"
+                                     f"/runs", params={"status": status, "per_page": 5}, timeout=30,
+                                     headers={"Authorization": f"Bearer {token}"} if token else {})
+                reply.raise_for_status()
+                if reply.json().get("total_count"):
+                    return True
+            return False
+        except Exception as e:
+            print(f"[Story] Couldn't check for a running GitHub run ({type(e).__name__}); the duplicate checks apply.")
+            return None
+
+    def video_day(self, video_id):
+        """The local date a video goes (or went) live, as YYYY-MM-DD."""
+        item = self.youtube().videos().list(part="status,snippet", id=video_id).execute()["items"][0]
+        when = item["status"].get("publishAt") or item["snippet"]["publishedAt"]
+        return datetime.fromisoformat(when.replace("Z", "+00:00")).astimezone(self.tz).date().isoformat()
+
+    def saved_summary(self, key):
+        for place in ("episodes", "archive"):
+            script = read_json(os.path.join(self.book["folder"], place, key, "script.json"), None)
+            if script and script.get("summary"):
+                return script["summary"]
+        return None
+
+    def reconcile(self):
+        """The channel is the truth: an episode already on it (by title) counts as uploaded, so a run always picks
+        the next one, even when another run uploaded it and the saved progress missed that (2 to 3 Nov)."""
+        try:
+            titles = self.uploaded_titles(refresh=True)
+        except Exception as e:
+            print(f"[Story] Couldn't read the channel's uploads ({type(e).__name__}); using the saved progress.")
+            return
+        done, changed = self.book["progress"]["episodes"], False
+        for ep in self.book["episodes"]:
+            video_id = titles.get(self.long_title(ep))
+            if not video_id or (done.get(ep["key"]) or {}).get("status") == "uploaded":
+                continue
+            day = self.video_day(video_id)
+            done[ep["key"]] = {"status": "uploaded", "youtube_id": video_id, "date": day, "found_on_channel": True,
+                               "summary": self.saved_summary(ep["key"])}
+            if not self.state.get("last_date") or day > self.state["last_date"]:
+                self.state["last_date"] = day
+            print(f"[Story] {episode_label(ep)} is already on the channel ({video_id}, {day}); moving on.")
+            changed = True
+        if changed:
+            self.save_book()
+            write_json(self.state_file, self.state)
+
+    def uploaded_titles(self, refresh=False):
         """{title: video id} of the channel's 50 most recent uploads (scheduled ones included)."""
-        if not hasattr(self, "_uploaded"):
+        if refresh or not hasattr(self, "_uploaded"):
             youtube = self.youtube()
             uploads = youtube.channels().list(part="contentDetails", mine=True).execute()["items"][0][
                 "contentDetails"]["relatedPlaylists"]["uploads"]
@@ -1195,7 +1253,7 @@ class StoryChannel:
         body = {"snippet": {"title": title, "description": description, "categoryId": self.profile["category_id"],
                             "tags": tags, "defaultLanguage": "en", "defaultAudioLanguage": "en"},
                 "status": status}
-        if not self.test and title in self.uploaded_titles():
+        if not self.test and title in self.uploaded_titles(refresh=True):
             # Another run (or a laptop run) already uploaded it, e.g. two runs at the same time (2 to 3 Nov)
             print(f"[Story] '{title}' is already on the channel; not uploading it again.")
             return self.uploaded_titles()[title]
@@ -1314,6 +1372,12 @@ class StoryChannel:
 
     def run(self, targets, dry_run=False):
         """Make (and unless dry_run, upload) the planned episodes. Returns the number of videos uploaded."""
+        if not dry_run and not self.test and os.getenv("GITHUB_ACTIONS") != "true" and self.github_run_active():
+            # A laptop upload on 2 Nov ran alongside a GitHub run, and Chapter 1 went up twice (owner: "I don't want
+            # these kind of mistakes"). GitHub runs wait for each other; a laptop run waits for GitHub.
+            print("[Story] A GitHub pipeline run is in progress; it uploads the episode, so this laptop run doesn't.")
+            self.waiting = ""
+            return 0
         uploaded, notes = [], []
         for ep, day in targets:
             print(f"\n[Story] {self.book['title']}: {episode_label(ep)}"

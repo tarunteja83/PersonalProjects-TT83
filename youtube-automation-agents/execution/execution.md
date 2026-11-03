@@ -374,6 +374,11 @@ Test without changing the schedule: `python execution/execution.py --channel sto
 episode, no upload), or add `--post-now --visibility unlisted` to upload it now as unlisted (recorded as a test; the
 daily schedule still starts from it).
 
+**No duplicate uploads (since 3 Nov).** On 2 Nov a laptop upload overlapped a GitHub run and Chapter 1 went up
+twice. Now every run first reads the channel: an episode already on it (by title) counts as done, so the run
+picks the next one. A laptop run doesn't upload while a GitHub run is queued or running, and right before each
+upload the channel is read again, so an episode is never uploaded twice.
+
 ## Getting More Views
 
 [view_techniques.md](view_techniques.md) holds what we've learned about views:
