@@ -38,7 +38,9 @@ other people's videos; it breaks YouTube's policies and can get a channel remove
 | Learn from results [S1] | Agent 8, Analyst | Records every uploaded video's views. Each channel's search phrases are ordered by the views their videos got after 48 hours (phrases not tried for 3 days are tried again first), and a daily Telegram report shows what works. |
 | Retention and title rules [S1] | ACTIVE RULES above | Sent to Gemini with every script and title. |
 | Real, current footage [S2] | Agent 2, Footage | Frontline (`footage_style: "real"`) shows real footage of the actual people, places and events from Wikimedia Commons (public domain, CC0, CC BY only), shown whole in Shorts. |
-| Picture matches the words [S2] | Agent 2, Footage | Stock clips are only used if their tags match the scene's subject (not just "cartoon"); kids scenes with no matching video get a matching cartoon illustration; otherwise the backup term is tried. |
+| Picture matches the words [S2, S4] | Agent 2, Footage | Stock clips are only considered if their tags match the scene's subject; then Gemini looks at up to 5 candidates per scene next to the words spoken in it and picks the one that shows them (right person, place, animal, action; for news the right country and time), or none, in which case a neighbouring clip is reused. Archive material is kept out of current stories. |
+| Fewer, better videos [S4] | questions.yaml | Frontline and WonderSprout make 1 long video and 1 Short a day (was 8 and 5). |
+| Told, not read [S4] | Inkbound Tales (storyteller.py, expressive_voice.py) | An unhurried storyteller voice with room after each sentence and scene, and plain-words explanations of anything unfamiliar for listeners new to the book. |
 | Faster cuts [S2] | BRAIN.md `footage` | About 6 clips per Short (was 3) and a new clip about every 8 seconds in long videos (was 15). |
 | A human-sounding voice [S2] | Agent 3, `expressive_voice.py` | Each sentence gets its own pitch, speed and volume (`voice_expression`: lively for kids, measured for news). |
 | Fun, hooky kids stories [S2] | BRAIN.md Agent 3 instructions | Named heroes with a funny trait, a silly problem, three escalating tries, a twist; sound words; the viewer is asked something every 20 to 30 seconds. |
@@ -114,3 +116,19 @@ other people's videos; it breaks YouTube's policies and can get a channel remove
 3. Rejected: keyword stuffing (lists of keywords in the description, unrelated popular phrases or other channels'
    names in tags). It's against YouTube's spam and misleading-metadata policies; only phrases the video is about are
    used.
+
+### S4. Owner's review and viewers' remarks (2026-11-05)
+- Source: the owner watched recent videos; Inkbound Tales viewers commented on the narration.
+- Status: reviewed
+
+**What it teaches:**
+1. **The pictures didn't match the words** on Frontline and WonderSprout (run #54's sync report: a 1914 trench photo
+   for a 2026 Ukraine story, an airliner-crash meeting for "the Kremlin", random clips for lion facts; kids scripts
+   read "Transition" and "Outro (20 seconds)" aloud; a "5 to 7 minute" video ran 3 minutes).
+   → Adopted: the footage check (Gemini picks per scene from thumbnails), archive filter, script cleaning and
+   lengthening.
+2. **Quality over quantity:** only 1 long video and 1 Short a day per channel, each precise.
+   → Adopted: 1 + 1 a day, made in the midnight run.
+3. **Inkbound "just reads the story":** viewers want a storyteller who isn't in a hurry and explains things to
+   someone who knows nothing about them.
+   → Adopted: the storyteller voice (143 words a minute instead of 176, longer pauses) and "explain" lines.

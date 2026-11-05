@@ -27,8 +27,8 @@ DEFAULT_VOICES = {
     ("Telugu", False): "te-IN-MohanNeural",
     ("Telugu", True): "te-IN-ShrutiNeural",
 }
-SPEEDS = ["-15%", "-5%", "+0%", "+10%"]
-VOICE_EXPRESSIONS = ["lively", "measured", "off"]
+SPEEDS = ["-15%", "-8%", "-5%", "+0%", "+10%"]
+VOICE_EXPRESSIONS = ["lively", "measured", "storyteller", "off"]
 MASCOTS = ["wondersprout"]
 VIDEO_LENGTHS = [15, 30, 45, 60]
 VISIBILITIES = ["public", "unlisted", "private"]

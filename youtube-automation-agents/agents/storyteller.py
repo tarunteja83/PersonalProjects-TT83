@@ -60,8 +60,11 @@ DEFAULTS = {
     "make_ahead_days": 1,
     "lines_per_picture": 3,
 }
-# The narration's pace at voice_speed -5%, measured on edge-tts English voices
+# The narration's pace with the storyteller voice at voice_speed -8%, pauses included (measured 2026-11-05: 143;
+# the old "measured" voice at -5% ran at 176, which viewers heard as reading, not telling)
 WORDS_PER_MINUTE = 145
+# Extra silence where the picture changes, on top of the sentence pause
+SCENE_PAUSE_SECONDS = 0.5
 FPS = 25
 # Book-page colours
 PAPER = (244, 239, 227)
@@ -326,10 +329,12 @@ def group_scenes(lines, size):
         if line.get("card"):
             line["scene"], start = None, None
             continue
-        new = (start is None or line["kind"] != kind or count >= size
+        # A narrator's explanation belongs to the scene it is in (it never costs a picture of its own)
+        line_kind = "story" if line["kind"] == "explain" else line["kind"]
+        new = (start is None or line_kind != kind or count >= size
                or (for_scenes and line.get("picture") and count >= 2))
         if new:
-            start, count, kind = index, 0, line["kind"]
+            start, count, kind = index, 0, line_kind
             line["picture"] = line.get("picture") or line["text"]
         elif index != start:
             line["picture"] = None
@@ -519,6 +524,14 @@ class StoryChannel:
             "can). Never invent events or change what happens. Condense descriptions, not plot.\n"
             "- Narration is third person in the narrator's voice; dialogue lines contain only the spoken words (no "
             "quote marks, no 'he said') and are spoken by that character.\n"
+            "- Tell it, don't read it: the narrator is a storyteller talking to one listener, in no hurry. Set the "
+            "scene, let a moment land before the next one, and build suspense before a reveal.\n"
+            "- Explain as you go, for a listener who has never read the book and doesn't know its time and place: when "
+            "something unfamiliar comes up (a place such as a moor, an old custom or word, who a person is, why a clue "
+            "matters), add one narrator line with kind \"explain\" that explains it in plain, everyday words, the way "
+            "you'd explain it to a friend. Explanations never change or add to the story, and there are only as many as "
+            "the listener needs (usually 3 to 8 an episode).\n"
+            "- Now and then, gently remind the listener what an earlier clue or event means, so nobody gets lost.\n"
             "- Start with a 2 or 3 line HOOK that teases this episode's most gripping moment without spoiling how it "
             "ends" + (", then one RECAP line starting \"Previously,\"" if recap else "") + ", then the story.\n"
             "- End on the episode's cliffhanger" + ("" if is_last else ", then one NEXT line teasing the next "
@@ -538,7 +551,7 @@ class StoryChannel:
             + "\nTitles and hooks follow these rules too:\n" + view_rules() + "\n\n"
             "Reply with ONLY this JSON:\n"
             "{\n"
-            '  "lines": [{"kind": "hook|recap|story|next", "speaker": "narrator or the character\'s exact name", '
+            '  "lines": [{"kind": "hook|recap|story|explain|next", "speaker": "narrator or the character\'s exact name", '
             '"text": "one sentence", "picture": "the scene illustration, or empty inside a scene"}],\n'
             '  "new_characters": [{"name": "", "gender": "male|female", "age": "child|young|adult|old", '
             '"look": "face, hair, build, clothes"}],\n'
@@ -678,6 +691,10 @@ class StoryChannel:
             return
         print(f"[Story] Narrating {len(script['lines'])} lines...")
         spec = [dict(self.voice_for(line["speaker"]), text=line["text"]) for line in script["lines"]]
+        # A little more silence where the page turns (a new picture or a card follows), so each scene can land
+        for line, following in zip(spec, script["lines"][1:]):
+            if following.get("picture") or following.get("kind") == "card":
+                line["pause"] = SCENE_PAUSE_SECONDS
         style = self.profile.get("voice_expression") if self.profile.get("voice_expression") in \
             expressive_voice.STYLES else "measured"
         seconds, starts = expressive_voice.narrate_lines(spec, self.profile.get("voice_rate", "-5%"), style, path)

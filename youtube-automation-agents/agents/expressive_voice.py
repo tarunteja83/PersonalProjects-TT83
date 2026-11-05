@@ -5,7 +5,8 @@ questions rise, exclamations lift, plain sentences vary a little so the voice ne
 down. The sentence audio is trimmed of silence and joined with pauses, which also gives exact sentence timings
 for matching footage to the narration.
 
-voice_expression in questions.yaml: "lively" (kids), "measured" (news), or "off" (the old one-pass narration).
+voice_expression in questions.yaml: "lively" (kids), "measured" (news), "storyteller" (books: slower, with room to
+breathe), or "off" (the old one-pass narration).
 """
 import asyncio
 import re
@@ -64,8 +65,14 @@ STYLES = {
         "hook": (4, 6, 8, 0.35), "exclaim": (3, 4, 5, 0.30), "question": (-3, 10, 2, 0.45),
         "plain": [(0, 0, 0, 0.25), (-3, -4, 0, 0.25), (2, 2, 0, 0.25)], "last": (-6, -4, 0, 0.40),
     },
+    # A storyteller in no hurry (Inkbound Tales; viewers said the voice "just reads the story", 5 Nov 2026): slower,
+    # with room after each sentence, questions left hanging a moment, and a slow, settling last line
+    "storyteller": {
+        "hook": (-4, 4, 4, 0.70), "exclaim": (-3, 6, 4, 0.60), "question": (-7, 10, 0, 0.85),
+        "plain": [(-6, 0, 0, 0.55), (-9, -4, 0, 0.60), (-5, 3, 0, 0.55)], "last": (-12, -3, 0, 1.00),
+    },
 }
-EXPRESSIONS = ["lively", "measured", "off"]
+EXPRESSIONS = ["lively", "measured", "storyteller", "off"]
 # Sentences this short are joined to the next one, so the voice doesn't stop and start on every fragment
 MIN_WORDS = 3
 PARALLEL = 4
@@ -202,13 +209,14 @@ def shift(value, offset, unit):
 def narrate_lines(lines, base_rate, style, out_mp3):
     """Narrate a story line by line, each in its speaker's voice, never merging lines (each has its own picture).
 
-    lines: [{"text", "voice", "pitch" (Hz offset), "rate" (% offset)}]. Returns (seconds, [line start seconds]).
+    lines: [{"text", "voice", "pitch" (Hz offset), "rate" (% offset), "pause" (extra seconds after the line,
+    optional)}]. Returns (seconds, [line start seconds]).
     """
     plans = []
     for index, line in enumerate(lines):
         rate, pitch, volume, pause = prosody(style, index, len(lines), line["text"], base_rate)
         plans.append((line["text"], line["voice"], shift(rate, line.get("rate", 0), "%"),
-                      shift(pitch, line.get("pitch", 0), "Hz"), volume, pause))
+                      shift(pitch, line.get("pitch", 0), "Hz"), volume, pause + float(line.get("pause") or 0)))
     audio = asyncio.run(_speak_all([plan[:5] for plan in plans]))
     pcm, starts = bytearray(b"\0" * (int(0.15 * SAMPLE_RATE) * 2)), []
     for mp3, plan in zip(audio, plans):

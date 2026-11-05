@@ -6,6 +6,7 @@ are free to use. Both ask that you show where the footage came from, so each des
 footage.provider in BRAIN.md: "pixabay", "pexels", or "auto" (whichever has a key: PIXABAY_API_KEY, then PEXELS_API_KEY).
 """
 import html
+import io
 import os
 import re
 import shutil
@@ -14,8 +15,9 @@ import time
 
 import imageio_ffmpeg
 import requests
+from PIL import Image
 
-from agents.ai import generate_text
+from agents.ai import generate_text, look_at_pictures
 
 PROVIDERS = {
     "pixabay": {"name": "Pixabay", "site": "https://pixabay.com", "env": "PIXABAY_API_KEY"},
@@ -40,6 +42,14 @@ STYLE_WORDS = {"cartoon", "cartoons", "animated", "animation", "funny", "cute", 
 MAX_DOWNLOAD_BYTES = 80 * 1024 * 1024
 # The ideal clip height for each output shape: Shorts are 1080x1920, long videos 1920x1080
 TARGET_HEIGHT = {"portrait": 1920, "landscape": 1080}
+# Footage check (owner, 5 Nov 2026: clips didn't match the words): each scene's candidates are shown to Gemini as
+# thumbnails next to the scene's narration, and it picks the one that shows what is said
+CANDIDATES_PER_SCENE = 5
+SCENES_PER_CHECK = 8
+OPTION_LETTERS = "abcde"
+THUMB_WIDTH = 320
+# Real (Commons) material dated more than this many years ago is archive footage, kept out of current stories
+OLD_YEARS = 15
 
 
 def safe_error(error, api_key):
@@ -206,8 +216,23 @@ def relevant(title, term):
     return bool(words) and all(w in title for w in words)
 
 
+def commons_about(title, meta):
+    """What a Commons file shows, for the footage check: its name, date and description."""
+    date = re.sub(r"<[^>]+>", "", meta.get("DateTimeOriginal", {}).get("value", ""))[:10]
+    text = re.sub(r"<[^>]+>", " ", meta.get("ImageDescription", {}).get("value", ""))
+    text = re.sub(r"\s+", " ", html.unescape(text)).strip()
+    return title[5:] + (f" (dated {date})" if date else "") + (f": {text[:200]}" if text else "")
+
+
+def commons_credit(meta, page, licence):
+    artist = re.sub(r"<[^>]+>", "", meta.get("Artist", {}).get("value", ""))
+    artist = re.sub(r"\s+", " ", html.unescape(artist)).strip() or "unknown"
+    return f"{artist[:60]}, {licence}, commons.wikimedia.org/?curid={page.get('pageid')}"
+
+
 def commons_candidates(term, orientation="portrait", min_seconds=4):
-    """[(file title, video url, credit, duration seconds)] of freely licensed real footage matching the term."""
+    """Freely licensed real footage whose title names the term: [{key, kind, site, url, credit, duration, thumb,
+    about}]."""
     pace()
     search = requests.get(COMMONS_API, headers=COMMONS_HEADERS, timeout=30, params={
         "action": "query", "list": "search", "srsearch": f"{term} filetype:video", "srnamespace": 6,
@@ -218,7 +243,7 @@ def commons_candidates(term, orientation="portrait", min_seconds=4):
     pace()
     info = requests.get(COMMONS_API, headers=COMMONS_HEADERS, timeout=30, params={
         "action": "query", "titles": "|".join(titles[:20]), "prop": "videoinfo",
-        "viprop": "url|size|extmetadata|derivatives", "format": "json"}).json()
+        "viprop": "url|size|extmetadata|derivatives", "viurlwidth": THUMB_WIDTH, "format": "json"}).json()
     pages = {p["title"]: p for p in info.get("query", {}).get("pages", {}).values()}
     target = TARGET_HEIGHT[orientation] if orientation == "landscape" else 720
     found = []
@@ -234,15 +259,15 @@ def commons_candidates(term, orientation="portrait", min_seconds=4):
         if not versions:
             continue
         best = min(versions, key=lambda d: abs(d["height"] - target))
-        artist = re.sub(r"<[^>]+>", "", meta.get("Artist", {}).get("value", ""))
-        artist = re.sub(r"\s+", " ", html.unescape(artist)).strip() or "unknown"
-        credit = f"{artist[:60]}, {licence}, commons.wikimedia.org/?curid={page.get('pageid')}"
-        found.append((title, best["src"], credit, float(details["duration"])))
+        found.append({"key": title, "kind": "real footage", "site": COMMONS_SITE, "url": best["src"],
+                      "credit": commons_credit(meta, page, licence), "duration": float(details["duration"]),
+                      "thumb": details.get("thumburl"), "about": commons_about(title, meta)})
     return found
 
 
 def commons_photo_candidates(term, orientation="portrait", min_width=800):
-    """[(file title, image url, credit)] of freely licensed real photos matching the term (when there is no video)."""
+    """Freely licensed real photos whose title names the term (shown as a slow zoom): [{key, kind, site, url,
+    credit, thumb, about}]."""
     pace()
     search = requests.get(COMMONS_API, headers=COMMONS_HEADERS, timeout=30, params={
         "action": "query", "list": "search", "srsearch": f"{term} filetype:bitmap", "srnamespace": 6,
@@ -264,10 +289,10 @@ def commons_photo_candidates(term, orientation="portrait", min_width=800):
         if (not free_licence(licence) or details.get("mime") not in ("image/jpeg", "image/png")
                 or (details.get("width") or 0) < min_width):
             continue
-        artist = re.sub(r"<[^>]+>", "", meta.get("Artist", {}).get("value", ""))
-        artist = re.sub(r"\s+", " ", html.unescape(artist)).strip() or "unknown"
-        credit = f"{artist[:60]}, {licence}, commons.wikimedia.org/?curid={page.get('pageid')}"
-        found.append((title, details.get("thumburl") or details["url"], credit))
+        url = details.get("thumburl") or details["url"]
+        found.append({"key": title, "kind": "real photo", "site": COMMONS_SITE, "url": url,
+                      "credit": commons_credit(meta, page, licence),
+                      "thumb": url.replace("/1920px-", f"/{THUMB_WIDTH}px-"), "about": commons_about(title, meta)})
     return found
 
 
@@ -332,123 +357,194 @@ def name_only(term):
     return " ".join(words[:2]) if len(words) > 2 else ""
 
 
-def real_photo(term, path, seconds, orientation, used_ids, cache):
-    """When there's no real video, a real photo of the person, place or event as a slow zoom; (title, credit) or None."""
-    key = ("photo", term)
-    if key not in cache:
-        cache[key] = commons_photo_candidates(term, orientation)
-        if not cache[key] and name_only(term):
-            cache[key] = commons_photo_candidates(name_only(term), orientation)
-    for title, url, credit in cache[key]:
-        if title in used_ids:
-            continue
-        used_ids.add(title)
-        photo_clip(url, path, seconds, orientation)
-        return title, credit
-    return None
+# ---------- choosing the footage that shows what is said ----------
+
+def archive_material(candidate, term):
+    """True for archive material (a 1914 trench photo, a decades-old negative) when the term isn't about the past."""
+    if re.search(r"\b1[0-9]{3}\b|\b20[0-9]{2}\b|world war|\bww ?(?:1|2|i|ii)\b", term, re.IGNORECASE):
+        return False
+    years = [int(y) for y in re.findall(r"\b(1[89][0-9]{2}|20[0-9]{2})\b", candidate["about"])]
+    return "negative" in candidate["about"].lower() or bool(years and max(years) < time.localtime().tm_year - OLD_YEARS)
 
 
-def real_clip(term, path, seconds, orientation, used_ids, cache, uses):
-    """Download real footage for the term into path; returns (file title, credit), or None if nothing matches.
+def scene_candidates(provider, api_key, options, style, index, kids, orientation, cache):
+    """Up to CANDIDATES_PER_SCENE ways to show one scene, the most specific first: for each of its terms (specific,
+    then backup) real footage and photos (style "real"), stock clips, and cartoon pictures (cartoon styles)."""
+    def cached(key, search):
+        if key not in cache:
+            try:
+                cache[key] = with_retries(search) or []
+            except (requests.RequestException, ValueError, KeyError) as e:
+                print(f"[Stock footage] Search for '{key[1]}' failed: {safe_error(e, api_key)}")
+                cache[key] = []
+        return cache[key]
 
-    An unused video is preferred; if every match was already used, the best one is reused from a later moment,
-    which keeps the number of credits (and the description) short.
-    """
-    if term not in cache:
-        cache[term] = commons_candidates(term, orientation)
-        if not cache[term] and name_only(term):
-            cache[term] = commons_candidates(name_only(term), orientation)
-    if not cache[term]:
+    wanted = clip_type(style, index)
+    per_term = []
+    for n, term in enumerate(options):
+        found = []
+        if style == "real" and n == 0:
+            short = name_only(term)
+            videos = cached(("commons", term), lambda: commons_candidates(term, orientation)
+                            or (commons_candidates(short, orientation) if short else []))
+            found += videos[:3]
+            if len(videos) < 2:
+                found += cached(("photo", term), lambda: commons_photo_candidates(term, orientation)
+                                or (commons_photo_candidates(short, orientation) if short else []))[:3]
+        for video_type in ([wanted, None] if wanted else [None]):
+            stock = cached((provider, term, video_type),
+                           lambda: CANDIDATES[provider](api_key, term, kids, video_type, orientation))
+            found += stock[:3]
+            if stock:
+                break
+        if provider == "pixabay" and style in ("animation", "mixed"):
+            found += cached(("illustration", term), lambda: pixabay_illustrations(api_key, term, kids))[:2]
+        per_term.append([dict(c, term=term) for c in found
+                         if not (c["site"] == COMMONS_SITE and archive_material(c, term))])
+    # Most from the specific term, some from the backup, so the check can fall back to a generic but true picture
+    ordered = [c for share, group in zip((3, 2, 1), per_term) for c in group[:share]]
+    ordered += [c for group in per_term for c in group]
+    chosen, seen = [], set()
+    for c in ordered:
+        if c["key"] not in seen:
+            seen.add(c["key"])
+            chosen.append(c)
+    return chosen[:CANDIDATES_PER_SCENE]
+
+
+def thumbnail(url):
+    """A small JPEG of a candidate's picture for the footage check, or None."""
+    if not url:
         return None
-    fresh = [c for c in cache[term] if c[0] not in used_ids]
-    title, url, credit, duration = (fresh or cache[term])[0]
-    used_ids.add(title)
-    start = segment_start(duration, seconds) + uses.get(title, 0) * (seconds + 2)
-    if start + seconds > duration:
-        start = (start % max(duration - seconds, 1.0)) if duration > seconds else 0.0
-    uses[title] = uses.get(title, 0) + 1
-    download_segment(url, path, start, seconds)
-    return title, credit
+    try:
+        response = requests.get(url, headers=COMMONS_HEADERS, timeout=20)
+        response.raise_for_status()
+        picture = Image.open(io.BytesIO(response.content)).convert("RGB")
+        picture.thumbnail((THUMB_WIDTH, THUMB_WIDTH))
+        out = io.BytesIO()
+        picture.save(out, "JPEG", quality=80)
+        return out.getvalue()
+    except Exception:
+        return None
+
+
+def check_prompt(context, kids, listing, seeing):
+    return (
+        f"You choose the footage for a narrated YouTube video ({context}). For each SCENE you get the words spoken "
+        "during it and up to 5 options, each with a description" + (" and a picture" if seeing else "") + ". "
+        + ("" if seeing else "You can't see the pictures: judge from the descriptions. ")
+        + "Pick the option that shows what is being said at that moment: the same person, place, animal, object or "
+        "action. When the words are about a person, any picture of that person fits, wherever it was taken"
+        + ("" if kids else "; for events, places and armies it must be the right country and time (a current story "
+           "never gets pictures of an old war, another country's army, or archive photos and negatives from decades "
+           "ago, unless the words are about them)")
+        + ". A general picture that clearly fits the words (a map of the region, a flag, the right kind of animal "
+        "doing the right thing, the right kind of landscape) is fine. When several fit, prefer moving footage to a "
+        "photo. Reject options that show something else, are mostly text, a logo or a blank frame, or would confuse "
+        "or mislead a viewer" + (", and anything not suitable for young children" if kids else "") + ".\n"
+        'Reply with one line per scene and nothing else: "Scene N: b" (or "Scene N: b, a" with a second choice) or '
+        '"Scene N: none" when no option shows it.\n\n' + listing
+    )
+
+
+def check_footage(ai_client, models, texts, pools, context, kids):
+    """For each scene, the indexes of its candidates that show what is said, best first ([] = none does), or None
+    where the check couldn't run (the candidates are then tried in search order).
+
+    Gemini sees each candidate's thumbnail (SCENES_PER_CHECK scenes per request); when it can't, the backup AI
+    judges from the titles, dates and descriptions alone.
+    """
+    picks = [None] * len(pools)
+    scenes = [i for i, pool in enumerate(pools) if pool]
+    for start in range(0, len(scenes), SCENES_PER_CHECK):
+        group = scenes[start:start + SCENES_PER_CHECK]
+        pictures, listing = [], []
+        for i in group:
+            listing.append(f'SCENE {i + 1}, narration: "{" ".join(texts[i].split())[:350]}"')
+            for letter, c in zip(OPTION_LETTERS, pools[i]):
+                label = f"Scene {i + 1} option {letter} ({c['kind']}): {c['about'][:220]}"
+                listing.append("  " + label)
+                data = thumbnail(c.get("thumb"))
+                if data:
+                    pictures.append((label, data))
+        reply = None
+        if pictures:
+            reply = look_at_pictures(ai_client, pictures, check_prompt(context, kids, "\n".join(listing), True),
+                                     models)
+        if reply is None:
+            try:
+                reply = generate_text(ai_client, check_prompt(context, kids, "\n".join(listing), False), models)
+            except Exception as e:
+                print(f"[Stock footage] Footage check unavailable for scenes {group[0] + 1} to {group[-1] + 1} "
+                      f"({str(e)[:120]}); using search order.")
+                continue
+        for number, choice in re.findall(r"scene\s*(\d+)\s*[:\-]\s*(none|[a-e](?:\s*,\s*[a-e])*)", reply, re.I):
+            i = int(number) - 1
+            if i in group:
+                letters = [] if choice.lower() == "none" else re.findall(r"[a-e]", choice.lower())
+                picks[i] = [OPTION_LETTERS.index(x) for x in letters if OPTION_LETTERS.index(x) < len(pools[i])]
+    checked = [p for p in picks if p is not None]
+    print(f"[Stock footage] Footage check: {sum(1 for p in checked if p)} of {len(scenes)} scenes have a matching "
+          f"option, {sum(1 for p in checked if not p)} have none, {len(scenes) - len(checked)} unchecked.")
+    return picks
+
+
+def take(candidate, path, seconds, orientation, uses):
+    """Download one candidate as the scene's clip."""
+    if candidate["kind"] == "real footage":
+        duration = candidate["duration"]
+        # A real video used again starts from a later moment
+        start = segment_start(duration, seconds) + uses.get(candidate["key"], 0) * (seconds + 2)
+        if start + seconds > duration:
+            start = (start % max(duration - seconds, 1.0)) if duration > seconds else 0.0
+        uses[candidate["key"]] = uses.get(candidate["key"], 0) + 1
+        download_segment(candidate["url"], path, start, seconds)
+    elif candidate["kind"] in ("real photo", "cartoon picture"):
+        photo_clip(candidate["url"], path, seconds, orientation)
+    else:
+        with_retries(lambda: download_file(candidate["url"], path))
 
 
 def fetch_scene_clips(provider, api_key, terms, destination_dir, prefix, kids=False, style="any",
-                      orientation="portrait", lengths=None):
-    """One clip per scene, in scene order, trying each scene's terms in turn (specific first, then backup).
+                      orientation="portrait", lengths=None, ai_client=None, models=None, texts=None, context=""):
+    """One clip per scene, in scene order, that shows what the scene's narration says.
 
-    style "real": each scene's specific term is first looked up as real footage of the actual people, places and
-    events (Wikimedia Commons); stock footage is used when there is none. terms: [[term, ...] per scene];
-    lengths: seconds each scene lasts. Returns ([path or None per scene], [(site, credit)], [term used per scene]).
+    terms: [[specific term, backup term, ...] per scene]; texts: each scene's spoken words; lengths: seconds each
+    scene lasts. Each scene's candidates (scene_candidates) are checked against its words (check_footage) and the
+    best one that downloads is used; a scene where none fits reuses a neighbouring clip. Returns ([path or None per
+    scene], [(site, credit)], [term used per scene]).
     """
     os.makedirs(destination_dir, exist_ok=True)
-    paths, credits, used_terms, used_ids, cache, real_cache, uses = [], [], [], set(), {}, {}, {}
-    for index, options in enumerate(terms):
-        wanted = clip_type(style, index)
+    cache = {}
+    pools = [scene_candidates(provider, api_key, options, style, index, kids, orientation, cache)
+             for index, options in enumerate(terms)]
+    picks = (check_footage(ai_client, models, texts, pools, context, kids) if ai_client and texts
+             else [None] * len(pools))
+    paths, credits, used_terms, used_ids, uses = [], [], [], set(), {}
+    for index, pool in enumerate(pools):
+        order = pool if picks[index] is None else [pool[i] for i in picks[index]]
+        scene_seconds = lengths[index] if lengths and index < len(lengths) else 8
         path, chosen = None, None
-        if style == "real" and options:
-            target = os.path.join(destination_dir, f"{prefix}_scene{index + 1:03d}{REAL_SUFFIX}")
-            scene_seconds = lengths[index] if lengths and index < len(lengths) else 8
+        for c in order:
+            # Real videos may be reused from a later moment; any other clip is shown once
+            if c["key"] in used_ids and c["kind"] != "real footage":
+                continue
+            real = c["site"] == COMMONS_SITE
+            target = os.path.join(destination_dir, f"{prefix}_scene{index + 1:03d}{REAL_SUFFIX if real else '.mp4'}")
+            seconds = min(max(scene_seconds + 1, 4 if real else 3), 30)
             try:
-                seconds = min(max(scene_seconds + 1, 4), 30)
-                got = real_clip(options[0], target, seconds, orientation, used_ids, real_cache, uses)
-                kind = "real footage"
-                if not got:
-                    # No video of it: a real photo of the person, place or event, slowly zooming
-                    got = real_photo(options[0], target, seconds, orientation, used_ids, real_cache)
-                    kind = "real photo"
-                if got:
-                    path, chosen = target, options[0]
-                    credits.append((COMMONS_SITE, got[1]))
-                    print(f"[Stock footage] Scene {index + 1}: '{options[0]}' -> {kind}: {got[0][5:75]}")
+                take(c, target, seconds, orientation, uses)
             except (requests.RequestException, subprocess.SubprocessError, OSError, ValueError, KeyError) as e:
-                print(f"[Stock footage] Scene {index + 1}: real footage for '{options[0]}' failed "
-                      f"({type(e).__name__}); using stock footage.")
-                path = None
-        try:
-            for term in ([] if path else options):
-                for video_type in ([wanted, None] if wanted else [None]):
-                    key = (term, video_type)
-                    if key not in cache:
-                        cache[key] = with_retries(
-                            lambda: CANDIDATES[provider](api_key, term, kids, video_type, orientation))
-                    pool = [c for c in cache[key] if c[0] not in used_ids]
-                    if pool:
-                        clip_id, url, credit = pool[0]
-                        used_ids.add(clip_id)
-                        path = os.path.join(destination_dir, f"{prefix}_scene{index + 1:03d}.mp4")
-                        with_retries(lambda: download_file(url, path))
-                        credits.append((PROVIDERS[provider]["name"], credit))
-                        chosen = term
-                        print(f"[Stock footage] Scene {index + 1}: '{term}' -> {PROVIDERS[provider]['name']} "
-                              f"video {clip_id}")
-                        break
-                if not path and provider == "pixabay" and style in ("animation", "mixed"):
-                    # No video really shows it: a matching cartoon drawing, gently zooming, before trying the
-                    # next (more generic) term
-                    key = ("illustration", term)
-                    if key not in cache:
-                        cache[key] = with_retries(lambda: pixabay_illustrations(api_key, term, kids))
-                    seconds = lengths[index] + 1 if lengths and index < len(lengths) else 8
-                    target = os.path.join(destination_dir, f"{prefix}_scene{index + 1:03d}.mp4")
-                    # Pixabay's image server sometimes refuses one picture for a while: try a few matching ones
-                    for image_id, url, credit in [c for c in cache[key] if c[0] not in used_ids][:4]:
-                        used_ids.add(image_id)
-                        try:
-                            photo_clip(url, target, min(max(seconds, 3), 30), orientation)
-                        except (requests.RequestException, subprocess.SubprocessError):
-                            continue
-                        path, chosen = target, term
-                        credits.append(("Pixabay", credit))
-                        print(f"[Stock footage] Scene {index + 1}: '{term}' -> Pixabay cartoon illustration "
-                              f"{image_id[3:]}")
-                        break
-                if path:
-                    break
-        except requests.RequestException as e:
-            print(f"[Stock footage] Scene {index + 1} ({' / '.join(options)}) failed: {safe_error(e, api_key)}")
-            path = None
+                print(f"[Stock footage] Scene {index + 1}: {c['kind']} failed ({type(e).__name__}); trying the next.")
+                continue
+            used_ids.add(c["key"])
+            credits.append((c["site"], c["credit"]))
+            path, chosen = target, c["term"]
+            print(f"[Stock footage] Scene {index + 1}: '{c['term']}' -> {c['kind']}: {c['about'][:80]}")
+            break
         if not path:
-            print(f"[Stock footage] Scene {index + 1}: no clip for {' / '.join(options)}; "
-                  "a neighbouring clip will be reused.")
+            why = "no option shows what is said" if picks[index] == [] else f"no clip for {' / '.join(terms[index])}"
+            print(f"[Stock footage] Scene {index + 1}: {why}; a neighbouring clip will be reused.")
         paths.append(path)
         used_terms.append(chosen)
     return paths, credits, used_terms
@@ -482,7 +578,10 @@ def pexels_candidates(api_key, term, kids, video_type, orientation):
         if response.status_code == 404:
             continue
         response.raise_for_status()
-        return [(v["id"], pick_file(v, orientation)["link"], v.get("user", {}).get("name", "Pexels"))
+        # Pexels gives no tags; its page address names what the clip shows
+        return [{"key": v["id"], "kind": "stock video", "site": "Pexels", "url": pick_file(v, orientation)["link"],
+                 "credit": v.get("user", {}).get("name", "Pexels"), "thumb": v.get("image"),
+                 "about": v.get("url", "").rstrip("/").split("/")[-1].replace("-", " ")}
                 for v in response.json().get("videos", []) if v.get("duration", 0) >= 3 and pick_file(v, orientation)]
     return []
 
@@ -519,13 +618,16 @@ def tags_match(tags, term):
 
 
 def pixabay_illustrations(api_key, term, kids):
-    """[(id, image url, artist)] of Pixabay cartoon illustrations whose tags match the term's subject."""
+    """Pixabay cartoon illustrations whose tags match the term's subject: [{key, kind, site, url, credit, thumb,
+    about}]."""
     pace()
     params = {"key": api_key, "q": term[:100], "image_type": "illustration", "per_page": 30, "order": "popular",
               "safesearch": "true" if kids else "false"}
     response = requests.get(PIXABAY_IMAGES_URL, params=params, timeout=30)
     response.raise_for_status()
-    return [(f"img{h['id']}", h.get("largeImageURL") or h["webformatURL"], h.get("user", "Pixabay"))
+    return [{"key": f"img{h['id']}", "kind": "cartoon picture", "site": "Pixabay",
+             "url": h.get("largeImageURL") or h["webformatURL"], "credit": h.get("user", "Pixabay"),
+             "thumb": h.get("webformatURL") or h.get("previewURL"), "about": f"tags: {h.get('tags', '')}"}
             for h in response.json().get("hits", [])
             if tags_match(h.get("tags", ""), term) and (h.get("imageWidth") or 0) >= 1000]
 
@@ -538,8 +640,10 @@ def pixabay_candidates(api_key, term, kids, video_type, orientation):
     pace()
     response = requests.get(PIXABAY_URL, params=params, timeout=30)
     response.raise_for_status()
-    # Pixabay ranks popular clips even when they don't match; keep only clips whose tags share a word with the term
-    hits = [h for h in response.json().get("hits", []) if h.get("duration", 0) >= 3 and tags_match(h.get("tags", ""), term)]
+    # Pixabay ranks popular clips even when they don't match; keep only clips whose tags share a word with the term,
+    # and not the ones Pixabay itself marks as low quality
+    hits = [h for h in response.json().get("hits", []) if h.get("duration", 0) >= 3 and not h.get("isLowQuality")
+            and tags_match(h.get("tags", ""), term)]
 
     def is_portrait(hit):
         medium = hit["videos"].get("medium", {})
@@ -551,7 +655,11 @@ def pixabay_candidates(api_key, term, kids, video_type, orientation):
     for hit in hits:
         rendition = pick_rendition(hit["videos"], orientation)
         if rendition:
-            found.append((hit["id"], rendition["url"], hit.get("user", "Pixabay")))
+            about = "; ".join(x for x in (hit.get("name") or "", f"tags: {hit.get('tags', '')}",
+                                          (hit.get("description") or "")[:150]) if x)
+            found.append({"key": hit["id"], "kind": "stock video", "site": "Pixabay", "url": rendition["url"],
+                          "credit": hit.get("user", "Pixabay"), "about": about,
+                          "thumb": (hit["videos"].get("medium") or {}).get("thumbnail") or rendition.get("thumbnail")})
     return found
 
 
@@ -565,57 +673,3 @@ def clip_type(style, index):
     if style == "real":
         return "film"
     return style if style in ("animation", "film") else None
-
-
-def fetch_clips(provider, api_key, terms, destination_dir, prefix, kids=False, style="any",
-                orientation="portrait", clips_per_term=1):
-    """Download clips_per_term clips for each search term. Returns (file paths, contributor credits).
-
-    Each term is searched once and several clips are taken from its results, to keep API requests low.
-    """
-    os.makedirs(destination_dir, exist_ok=True)
-    paths, credits, used_ids, cache = [], [], set(), {}
-
-    def candidates(term, video_type):
-        if (term, video_type) not in cache:
-            cache[(term, video_type)] = with_retries(
-                lambda: CANDIDATES[provider](api_key, term, kids, video_type, orientation))
-        return cache[(term, video_type)]
-
-    def download(url, target):
-        with requests.get(url, stream=True, timeout=180) as response:
-            response.raise_for_status()
-            with open(target, "wb") as f:
-                for chunk in response.iter_content(chunk_size=1 << 20):
-                    f.write(chunk)
-
-    index = 0
-    for term in terms:
-        for _ in range(clips_per_term):
-            wanted = clip_type(style, index)
-            try:
-                pool = [c for c in candidates(term, wanted) if c[0] not in used_ids]
-                if not pool and wanted:
-                    # e.g. no cartoon clip for this term: take any kind of clip instead
-                    pool = [c for c in candidates(term, None) if c[0] not in used_ids]
-            except requests.RequestException as e:
-                print(f"[Stock footage] {PROVIDERS[provider]['name']} search failed for '{term}': "
-                      f"{safe_error(e, api_key)}")
-                break
-            if not pool:
-                print(f"[Stock footage] No more clips for '{term}'.")
-                break
-            clip_id, url, credit = pool[0]
-            used_ids.add(clip_id)
-            index += 1
-            target = os.path.join(destination_dir, f"{prefix}_clip{index}.mp4")
-            try:
-                with_retries(lambda: download(url, target))
-            except requests.RequestException as e:
-                print(f"[Stock footage] Download failed for {PROVIDERS[provider]['name']} video {clip_id}: "
-                      f"{safe_error(e, api_key)}")
-                continue
-            paths.append(target)
-            credits.append(credit)
-            print(f"[Stock footage] '{term}' -> {PROVIDERS[provider]['name']} video {clip_id} by {credit}")
-    return paths, credits

@@ -21,6 +21,29 @@ DURATION_TOLERANCE = 1.0
 LONG_SCENE_SECONDS = 8
 # One-pass narration of a whole script (the fallback voice) normally takes under a minute
 ONE_PASS_TIMEOUT_SECONDS = 600
+# Long-video scripts under this share of their target word count are lengthened (a 3-minute "5 to 7 minute"
+# video went out on 4 Nov)
+SHORT_SCRIPT_SHARE = 0.85
+# Section labels some models write into the narration, which the voice then read out ("Transition", "Outro (20
+# seconds)", 4 Nov run): bold or bracketed labels, and timings in brackets
+STAGE_LABELS = re.compile(
+    r"\*\*\s*(?:intro|outro|hook|transition|recap|conclusion|ending|opening|scene|segment|part \d+)\b[^*]{0,40}\*\*"
+    r"\s*:?|\(\s*\d+\s*(?:s|sec|secs|seconds?|min|minutes?)\s*\)|\((?:pause|beat|music|sfx)[^)]{0,30}\)",
+    re.IGNORECASE)
+
+
+def clean_script(text):
+    """The narration with only spoken words: no section labels, markdown or speaker prefixes ([SOUND] tags stay)."""
+    text = STAGE_LABELS.sub(" ", text)
+    # A bold heading that is meant to be said ("**Round 1 - The Roar**") becomes its own sentence
+    text = re.sub(r"\*\*\s*([^*]+?)\s*\*\*", lambda m: m.group(1) if m.group(1)[-1] in ".!?:" else m.group(1) + ".",
+                  text)
+    # Markdown headings ("## Bonus"; a single # is a hashtag) and speaker prefixes ("Narrator:")
+    text = re.sub(r"^\s*#\s+|#{2,}\s*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\b(?:narrator|host|voice ?over)\s*:\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^\s*(?:wondersprout|vo)\s*:\s*", "", text, flags=re.MULTILINE | re.IGNORECASE)
+    text = text.replace("*", "").replace("__", "")
+    return " ".join(text.split())
 
 
 def stock_mode(config, profile):
@@ -155,7 +178,8 @@ class VoiceoverAgent:
         brackets = "no brackets other than the sound tags" if self.profile.get("made_for_kids") else "no brackets"
         prompt += (
             f"Stay within {target_words} words; a little shorter is fine, longer is not. The narration must be "
-            f"only spoken text: no stage directions, {brackets}, no intro labels.\n\n"
+            f"only spoken text: no stage directions, {brackets}, no markdown (** or #), no section headings or labels "
+            "such as Intro, Transition or Outro, and no timings.\n\n"
             # The upload title, keywords and footage ideas come from this same request, so each video costs one call
             "Reply in exactly this layout:\n"
             "KEYWORD: the one search phrase (2 to 5 words, in the script language) a viewer would type to find this "
@@ -187,7 +211,26 @@ class VoiceoverAgent:
 
         script, meta = parse_script_reply(generate_text(self.ai_client, prompt, self.config.get("ai_models")))
         item.update(meta)
+        script = clean_script(script)
+        if item.get("format") == "long" and len(script.split()) < target_words * SHORT_SCRIPT_SHARE:
+            script = self.lengthen(script, target_words)
         return self.fit_length(script, target_words)
+
+    def lengthen(self, script, target_words):
+        """A long video's script that came out well under its length is extended (1 more AI request)."""
+        print(f"[Agent 3: Voiceover] Script is {len(script.split())} words (target {target_words}); lengthening...")
+        try:
+            longer = clean_script(generate_text(self.ai_client, (
+                f"This narration script is too short. Rewrite it to about {target_words} words: keep the hook, the "
+                "order, the facts and the ending, and add more of what makes it worth watching (more detail, examples "
+                "and explanation in the same voice; for a kids game show, more clues and fun facts in each round). "
+                "Keep any [SOUND] tags and add more where they fit. Same language and tone. Only spoken words: no "
+                f"headings, labels or markdown. Output ONLY the narration.\n\n{script}"
+            ), self.config.get("ai_models")))
+        except Exception as e:
+            print(f"[Agent 3: Voiceover] Could not lengthen the script ({e}); keeping it.")
+            return script
+        return longer if len(longer.split()) > len(script.split()) else script
 
     def fit_length(self, script, target_words):
         """Keep the video near its target length: Gemini sometimes writes far more than asked."""

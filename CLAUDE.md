@@ -8,14 +8,13 @@ Read `youtube-automation-agents/execution/execution.md` (full user guide) and th
 ## Channels (live, created by the owner under a different Google account than the Cloud project)
 | Key | Channel | Link | Posting (IST) |
 |---|---|---|---|
-| `geopolitics_war` | Frontline Ledger TT83 | youtube.com/@frontline-ledger-tt83 | Shorts 06:00, 10:00, 14:00, 16:00, 18:00, 19:00; long (5 to 7 min) 12:00, 16:30 |
-| `kids_edu` | WonderSprout Kids TT83 (made for kids) | youtube.com/channel/UCf9u1ZaejKPPA-oOD8oXVfg | Shorts 06:00, 14:30; long (5 to 7 min) 11:30, 16:00, 18:30 |
+| `geopolitics_war` | Frontline Ledger TT83 | youtube.com/@frontline-ledger-tt83 | Short 06:00; long (5 to 7 min) 12:00 |
+| `kids_edu` | WonderSprout Kids TT83 (made for kids) | youtube.com/channel/UCf9u1ZaejKPPA-oOD8oXVfg | Short 06:00; long (5 to 7 min) 11:30 |
 | `story_books` | Inkbound Tales (general audience, same Google account) | youtube.com/@InkboundTalesTT83 | 1 illustrated book episode (5 to 10 min) + teaser Short, both 15:00 |
 
-All channels run together three times a day (`fetch_time: ["00:00", "13:00", "17:00"]`; since 2026-11-05, owner's
-request: the midnight run prepares the morning's videos so the day's first ones go live at 06:00). Frontline:
-midnight and afternoon 1 long + 2 Shorts, evening 2 Shorts. WonderSprout (since 2026-10-24, owner's request: long videos do better):
-midnight and afternoon 1 long + 1 Short, evening 1 long. 13 videos a day. Each run owns the go-live slots
+Since 2026-11-05 (owner: "only 2 videos a day per channel, but good and well synced") Frontline and WonderSprout
+each make 1 Short (06:00) + 1 long video in ONE run at midnight (`fetch_time: "00:00"`); Inkbound keeps three runs
+(`["00:00", "13:00", "17:00"]`) for its picture allowance. 6 uploads a day in all (was 13). Each run owns the go-live slots
 between its fetch time and the next one (`plan_run` in `execution.py`). The cron fires `github_schedule_lead_minutes`
 early, per fetch time (BRAIN.md: 00:00 235, 13:00 445, 17:00 445 minutes; crons 20:05, 05:35, 09:35 IST), because
 GitHub starts scheduled runs 3 to 10 hours late depending on the time of day (measured runs #27 to #56). Starting
@@ -85,7 +84,12 @@ early is harmless (`run_window` takes the nearest occurrence of the fetch time; 
 - **Stock footage (Pixabay), not YouTube downloads.** YouTube blocks yt-dlp from GitHub's cloud IPs ("Sign in to
   confirm you're not a bot"). It also avoids copyright claims. Pexels is supported in code, but its key issuance was
   paused, so the workflow passes only `PIXABAY_API_KEY`.
-- **Footage synced to narration.** The script is written first, then one clip per scene. Frontline may name public
+- **Footage synced to narration.** The script is written first, then one clip per scene, chosen by the footage
+  check (`stock_footage.scene_candidates` + `check_footage`: Gemini sees each candidate's thumbnail next to the
+  scene's words, 8 scenes a request; text-only backup judge; `archive_material` filter; none fits -> neighbouring
+  clip). Run #54 showed why: "forest trench" gave a 1914 photo, "Kremlin" an airliner-crash meeting, and kids
+  scripts read "Transition" and "Outro (20 seconds)" aloud; `agent_3_voiceover.clean_script` now strips such
+  labels and markdown, and long scripts under 85% of their words are lengthened (`lengthen`). Frontline may name public
   figures (government representatives) in search terms; the kids channel never names real people.
 - **AI voices, not voice cloning:** edge-tts with expressive sentence-by-sentence narration. Chosen by the owner on
   2026-10-24 from samples: `en-US-BrianMultilingualNeural` (measured) for Frontline, `en-US-AvaMultilingualNeural`
@@ -281,6 +285,13 @@ early is harmless (`run_window` takes the nearest occurrence of the fetch time; 
     tested offline with stubs. Gemini watching a video was first confirmed on S1 (~63K tokens at low resolution).
 
 ## 5 Nov 2026: midnight run, per-run lead times, no more silent hangs
+- Later the same day (owner's request): 1 long + 1 Short a day per trend channel, the footage check and script
+  cleaning above, and Inkbound's storyteller voice: `voice_expression: "storyteller"` at `voice_speed: "-8%"`
+  (measured 143 words a minute, was 176 with "measured" at -5%; viewers said it "just reads the story"), 0.5 s
+  more silence where the picture changes, and the retelling explains unfamiliar things in plain words (`explain`
+  lines, grouped into their scene so they cost no picture). Footage check and kid/Frontline downloads were tested
+  on run #54's problem scenes (Groq text judge; Gemini was out of quota that day, so the picture-based check and a
+  retelling with explain lines are not yet seen live).
 - Run #56 (05:45 IST start) found its first topic at 06:16 then hung in Agent 3 (script/voice) until GitHub's
   240-minute limit cancelled it: no videos that morning, and no log (Python buffered its output). Fixed: Gemini
   requests have a 180 s limit (`ai.REQUEST_TIMEOUT_SECONDS`, 600 s to watch a video) and a timed-out model is
@@ -342,7 +353,8 @@ early is harmless (`run_window` takes the nearest occurrence of the fetch time; 
 - **Open items:**
   - Ask the owner for Telegram messages / Actions results from the next runs: check the WonderSprout character,
     intro and outro, real photos on Frontline, start times near 00:00/13:00/17:00 (tune
-    `github_schedule_lead_minutes` per fetch time), and that all 13 videos upload.
+    `github_schedule_lead_minutes` per fetch time), and that all 6 videos upload; read the footage-check lines and
+    the sync report of the first runs after 5 Nov.
   - The owner's intro/outro are 474x642 (tall); in long videos they show on a blurred background. Suggested
     re-exporting them at 1920x1080.
   - YouTube daily upload limit: the owner was advised to phone-verify both channels at youtube.com/verify.

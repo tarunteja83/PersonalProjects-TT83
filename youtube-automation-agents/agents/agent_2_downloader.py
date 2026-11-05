@@ -66,10 +66,14 @@ class DownloaderAgent:
         terms = stock_footage.scene_terms(ai_client, scenes, item, profile, self.config.get("ai_models"))
         print(f"[Agent 2: Downloader] {len(scenes)} scenes for '{item['original_title'][:60]}'")
         try:
+            # Each scene's candidates are checked against what is said in it, so the picture matches the words
             paths, credits, used_terms = stock_footage.fetch_scene_clips(
                 provider, api_key, terms, self.download_dir, f"stock_{vid_id}",
                 kids=profile.get("made_for_kids", False), style=profile.get("footage_style", "any"),
-                orientation=orientation, lengths=[s["end"] - s["start"] for s in scenes])
+                orientation=orientation, lengths=[s["end"] - s["start"] for s in scenes], ai_client=ai_client,
+                models=self.config.get("ai_models"), texts=[s["text"] for s in scenes],
+                context=f"{profile['channel_name']}, {'made for young children' if profile.get('made_for_kids') else ''}"
+                        f" {profile.get('niche', '')}: {item.get('seo_title') or item['original_title']}")
         except Exception as e:
             print(f"[Agent 2: Downloader] Stock footage failed for {vid_id}: {stock_footage.safe_error(e, api_key)}")
             paths, credits, used_terms = [], [], []
