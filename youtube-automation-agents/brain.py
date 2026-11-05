@@ -69,7 +69,7 @@ def load_brain(brain_file=BRAIN_FILE, channels_file=CHANNELS_FILE, questions_fil
     if rules:
         instructions += "\n\n## VIEW-GROWTH RULES (apply to every script, title and hashtag)\n" + rules
     config["profiles"] = load_profiles(channels_file, questions_file)
-    lead = int(config.get("github_schedule_lead_minutes") or 0)
+    lead = config.get("github_schedule_lead_minutes") or 0
     for profile in config["profiles"].values():
         profile["schedule"]["lead_minutes"] = lead
     apply_media_folders(config)
@@ -383,9 +383,17 @@ def parse_days(value):
     return sorted({DAY_NAMES.index(str(day).strip().lower()[:3]) for day in value})
 
 
+def lead_for(lead, local_dt):
+    """Minutes GitHub's schedule fires before a run meant to start at local_dt. lead is one number for every run,
+    or {"HH:MM": minutes, "default": minutes} per fetch time, since GitHub's delay differs by time of day."""
+    if isinstance(lead, dict):
+        return int(lead.get(local_dt.strftime("%H:%M"), lead.get("default", 0)))
+    return int(lead or 0)
+
+
 def cron_time(local_dt, schedule):
     """When GitHub's schedule should fire (UTC) for a run meant to start at local_dt: lead_minutes earlier."""
-    return (local_dt - timedelta(minutes=schedule.get("lead_minutes") or 0)).astimezone(timezone.utc)
+    return (local_dt - timedelta(minutes=lead_for(schedule.get("lead_minutes"), local_dt))).astimezone(timezone.utc)
 
 
 def utc_slots(profile, ref_date=None):

@@ -3,9 +3,9 @@ name: Daily YouTube Multi-Agent Pipeline
 on:
   schedule:
     # BEGIN CHANNEL SCHEDULE (fetch times from execution/questions.yaml, updated by: python execution/execution.py --check)
-    - cron: '5 3 * * *'
-    - cron: '5 7 * * *'
-    - cron: '5 20 * * *'
+    - cron: '5 0 * * *'
+    - cron: '5 4 * * *'
+    - cron: '35 14 * * *'
     # END CHANNEL SCHEDULE
   workflow_dispatch:
     inputs:
@@ -60,6 +60,9 @@ jobs:
   run-youtube-agents:
     runs-on: ubuntu-latest
     timeout-minutes: 240
+    env:
+      # Print each log line as it happens, so a run that stalls still shows where it stopped
+      PYTHONUNBUFFERED: '1'
     defaults:
       run:
         working-directory: youtube-automation-agents

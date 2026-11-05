@@ -19,6 +19,10 @@ QUOTA = ("429", "RESOURCE_EXHAUSTED")
 MIN_GAP_SECONDS = 4
 # Per-minute limits clear within a minute, so when every model is rate-limited wait once and try again
 QUOTA_WAIT_SECONDS = 65
+# A Gemini request with no answer by then counts as failed and the next model is tried (a connection that never
+# answered stalled the 5 Nov morning run for 4 hours); watching a whole video takes longer
+REQUEST_TIMEOUT_SECONDS = 180
+VIDEO_TIMEOUT_SECONDS = 600
 
 # OpenAI-compatible providers that can stand in for Gemini, and the key each needs
 PROVIDERS = {
@@ -87,6 +91,10 @@ def _pace():
 
 def _try_models(client, prompt, models, errors, settings=None):
     """One pass over the models. Returns the text, or None if every model failed with a retryable error."""
+    from google.genai import types
+    settings = settings or types.GenerateContentConfig()
+    if settings.http_options is None:
+        settings.http_options = types.HttpOptions(timeout=REQUEST_TIMEOUT_SECONDS * 1000)
     for model in models:
         for attempt in range(2):
             _pace()
@@ -97,9 +105,10 @@ def _try_models(client, prompt, models, errors, settings=None):
                 if not is_retryable(e):
                     raise
                 errors.append(f"{model}: {message[:200]}")
-                # A retired model or an exhausted quota will not recover in 5 seconds, so go straight to
-                # the next model instead of spending a second request on the same one
-                if any(code in message for code in ("404", "NOT_FOUND") + QUOTA):
+                # A retired model, an exhausted quota or a request that timed out will not recover in 5 seconds,
+                # so go straight to the next model instead of spending a second request on the same one
+                if (any(code in message for code in ("404", "NOT_FOUND") + QUOTA)
+                        or "Timeout" in type(e).__name__ or "timed out" in message):
                     break
                 time.sleep(5 * (attempt + 1))
     return None
@@ -143,7 +152,8 @@ def watch_video(client, url, prompt, models=None):
     """
     from google.genai import types
     contents = types.Content(parts=[types.Part(file_data=types.FileData(file_uri=url)), types.Part(text=prompt)])
-    settings = types.GenerateContentConfig(media_resolution=types.MediaResolution.MEDIA_RESOLUTION_LOW)
+    settings = types.GenerateContentConfig(media_resolution=types.MediaResolution.MEDIA_RESOLUTION_LOW,
+                                           http_options=types.HttpOptions(timeout=VIDEO_TIMEOUT_SECONDS * 1000))
     errors = []
     try:
         text = _try_models(client, contents, models or DEFAULT_MODELS, errors, settings)

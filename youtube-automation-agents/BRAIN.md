@@ -12,10 +12,13 @@ ai_fallbacks:
   - provider: "groq"
     models: ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"]
 
-# GitHub starts scheduled runs late (4 to 5 hours in October 2026). The GitHub schedule fires this many minutes
-# BEFORE each fetch_time, so runs actually start near fetch_time. 0 = no shift. The Telegram start message says how
-# early or late each run started; adjust this if they drift.
-github_schedule_lead_minutes: 265
+# GitHub starts scheduled runs late, by a different amount at different times of day. The GitHub schedule fires
+# this many minutes BEFORE each fetch_time, so runs start near it: one number for every run, or one per fetch time
+# ("HH:MM": minutes, quoted; "default" for the rest). 0 = no shift. Set from runs #27 to #56 (26 Oct to 5 Nov 2026):
+# GitHub's delay was 3 to 6 h before dawn IST, 5.7 to 7.8 h for the 13:00 run and 6 to 9.8 h for the 17:00 run.
+# A run that starts early is fine (its videos are scheduled on YouTube); a late one misses go-live times. The
+# Telegram start message says how early or late each run started; adjust these if they drift.
+github_schedule_lead_minutes: {"00:00": 235, "13:00": 445, "17:00": 445, "default": 265}
 # true when the GitHub repository is public (unlimited Actions minutes, so --check skips the minutes warning)
 github_repo_public: true
 
@@ -111,7 +114,7 @@ cleanup_rules:                  # GitHub runs; laptop runs keep files in YouTube
 | `execution/view_techniques.md` | What gets views: its ACTIVE RULES are added to the AI instructions below for every video; it also logs every analysed source video (`--learn` or a link posted in Telegram) |
 | `execution/video_requests.json` | Videos the owner asked for in Telegram (a shared example or a topic); written by the Telegram inbox (`agents/inbox.py`), made by each channel's next run |
 | `BRAIN.md` (this file) | Rules shared by all channels: AI models and the free backup AI (`ai_fallbacks`, Groq), storage, footage source, editing and end card, upload and cleanup, AI writing instructions |
-| `.github/workflows/daily_youtube_agents.yml` | When GitHub runs (generated from each channel's `fetch_time` by `execution.py --check`, firing `github_schedule_lead_minutes` early because GitHub starts scheduled runs hours late) |
+| `.github/workflows/daily_youtube_agents.yml` | When GitHub runs (generated from each channel's `fetch_time` by `execution.py --check`, firing `github_schedule_lead_minutes` early, per fetch time, because GitHub starts scheduled runs hours late) |
 | `.github/workflows/telegram_inbox.yml` | Hourly: reads the owner's Telegram posts (`execution.py --inbox`) and commits adopted rules and queued requests |
 | `execution/execution.py` | The only entry point; reads the three files above and runs the agents |
 

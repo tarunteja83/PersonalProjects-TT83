@@ -20,6 +20,8 @@ jobs:
   inbox:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      PYTHONUNBUFFERED: '1'
     defaults:
       run:
         working-directory: youtube-automation-agents

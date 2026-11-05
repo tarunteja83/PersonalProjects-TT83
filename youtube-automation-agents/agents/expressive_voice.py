@@ -69,6 +69,8 @@ EXPRESSIONS = ["lively", "measured", "off"]
 # Sentences this short are joined to the next one, so the voice doesn't stop and start on every fragment
 MIN_WORDS = 3
 PARALLEL = 4
+# One sentence normally takes a few seconds; a stalled connection is given up on and retried
+SPEAK_TIMEOUT_SECONDS = 60
 
 
 def split_sentences(text):
@@ -109,15 +111,21 @@ def prosody(style, index, count, text, base_rate):
     return f"{base + rate:+d}%", f"{pitch:+d}Hz", f"{volume:+d}%", pause
 
 
+async def _stream(text, voice, rate, pitch, volume):
+    audio = bytearray()
+    async for chunk in edge_tts.Communicate(text, voice, rate=rate, pitch=pitch, volume=volume).stream():
+        if chunk["type"] == "audio":
+            audio += chunk["data"]
+    return bytes(audio)
+
+
 async def _speak(text, voice, rate, pitch, volume, attempts=3):
     for attempt in range(attempts):
         try:
-            audio = bytearray()
-            async for chunk in edge_tts.Communicate(text, voice, rate=rate, pitch=pitch, volume=volume).stream():
-                if chunk["type"] == "audio":
-                    audio += chunk["data"]
+            # A stalled connection to the voice service would otherwise wait forever
+            audio = await asyncio.wait_for(_stream(text, voice, rate, pitch, volume), SPEAK_TIMEOUT_SECONDS)
             if audio:
-                return bytes(audio)
+                return audio
         except Exception:
             if attempt == attempts - 1:
                 raise

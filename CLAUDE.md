@@ -8,15 +8,18 @@ Read `youtube-automation-agents/execution/execution.md` (full user guide) and th
 ## Channels (live, created by the owner under a different Google account than the Cloud project)
 | Key | Channel | Link | Posting (IST) |
 |---|---|---|---|
-| `geopolitics_war` | Frontline Ledger TT83 | youtube.com/@frontline-ledger-tt83 | Shorts 08:00, 10:00, 14:00, 16:00, 18:00, 19:00; long (5 to 7 min) 12:00, 16:30 |
-| `kids_edu` | WonderSprout Kids TT83 (made for kids) | youtube.com/channel/UCf9u1ZaejKPPA-oOD8oXVfg | Shorts 09:00, 14:30; long (5 to 7 min) 11:30, 16:00, 18:30 |
+| `geopolitics_war` | Frontline Ledger TT83 | youtube.com/@frontline-ledger-tt83 | Shorts 06:00, 10:00, 14:00, 16:00, 18:00, 19:00; long (5 to 7 min) 12:00, 16:30 |
+| `kids_edu` | WonderSprout Kids TT83 (made for kids) | youtube.com/channel/UCf9u1ZaejKPPA-oOD8oXVfg | Shorts 06:00, 14:30; long (5 to 7 min) 11:30, 16:00, 18:30 |
 | `story_books` | Inkbound Tales (general audience, same Google account) | youtube.com/@InkboundTalesTT83 | 1 illustrated book episode (5 to 10 min) + teaser Short, both 15:00 |
 
-Both channels run together three times a day (`fetch_time: ["06:00", "13:00", "17:00"]`). Frontline: morning and
-afternoon 1 long + 2 Shorts, evening 2 Shorts. WonderSprout (since 2026-10-24, owner's request: long videos do better):
-morning and afternoon 1 long + 1 Short, evening 1 long. 13 videos a day. Each run owns the go-live slots
+All channels run together three times a day (`fetch_time: ["00:00", "13:00", "17:00"]`; since 2026-11-05, owner's
+request: the midnight run prepares the morning's videos so the day's first ones go live at 06:00). Frontline:
+midnight and afternoon 1 long + 2 Shorts, evening 2 Shorts. WonderSprout (since 2026-10-24, owner's request: long videos do better):
+midnight and afternoon 1 long + 1 Short, evening 1 long. 13 videos a day. Each run owns the go-live slots
 between its fetch time and the next one (`plan_run` in `execution.py`). The cron fires `github_schedule_lead_minutes`
-(BRAIN.md, 265) early because GitHub starts scheduled runs 4 to 5 hours late. The owner plans to add more channels.
+early, per fetch time (BRAIN.md: 00:00 235, 13:00 445, 17:00 445 minutes; crons 20:05, 05:35, 09:35 IST), because
+GitHub starts scheduled runs 3 to 10 hours late depending on the time of day (measured runs #27 to #56). Starting
+early is harmless (`run_window` takes the nearest occurrence of the fetch time; verified for 22:45 to 02:30). The owner plans to add more channels.
 
 ## How it works (short)
 - **One entry point:** `execution/execution.py`. With no arguments it runs every channel with `run: true`. GitHub uses
@@ -277,6 +280,15 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
     (NB3OQ2IEM4w, 21 s) and queued it for WonderSprout; approve/reject/queue/cancel and the Scout's request handling
     tested offline with stubs. Gemini watching a video was first confirmed on S1 (~63K tokens at low resolution).
 
+## 5 Nov 2026: midnight run, per-run lead times, no more silent hangs
+- Run #56 (05:45 IST start) found its first topic at 06:16 then hung in Agent 3 (script/voice) until GitHub's
+  240-minute limit cancelled it: no videos that morning, and no log (Python buffered its output). Fixed: Gemini
+  requests have a 180 s limit (`ai.REQUEST_TIMEOUT_SECONDS`, 600 s to watch a video) and a timed-out model is
+  skipped at once; each edge-tts sentence has 60 s (`expressive_voice.SPEAK_TIMEOUT_SECONDS`, retried), one-pass
+  narration 600 s; both workflows set PYTHONUNBUFFERED so the log streams.
+- Schedule (owner's request): first run at midnight IST, both channels' first Short at 06:00 (Frontline 08:00 ->
+  06:00, WonderSprout 09:00 -> 06:00); `github_schedule_lead_minutes` became per fetch time (`brain.lead_for`).
+
 ## Runs of 31 Oct / 1 Nov 2026 (first runs with Inkbound Tales)
 - Runs #44 (04:38 IST) and #45 (15:50 IST) were red: story_books uploaded 0 because Cloudflare said the free
   allowance was used up, with 0 pictures drawn. #44 was before the 05:30 IST reset (expected), but #45 and a manual
@@ -329,8 +341,8 @@ between its fetch time and the next one (`plan_run` in `execution.py`). The cron
     GitHub run.
 - **Open items:**
   - Ask the owner for Telegram messages / Actions results from the next runs: check the WonderSprout character,
-    intro and outro, real photos on Frontline, start times near 06:00/13:00/17:00 (tune
-    `github_schedule_lead_minutes`), and that all 13 videos upload.
+    intro and outro, real photos on Frontline, start times near 00:00/13:00/17:00 (tune
+    `github_schedule_lead_minutes` per fetch time), and that all 13 videos upload.
   - The owner's intro/outro are 474x642 (tall); in long videos they show on a blurred background. Suggested
     re-exporting them at 1920x1080.
   - YouTube daily upload limit: the owner was advised to phone-verify both channels at youtube.com/verify.

@@ -17,10 +17,10 @@
 #    SEVERAL RUNS A DAY: give fetch_time a list, e.g. ["06:00", "13:00"].
 #    The day's videos (Shorts and long) are shared between the runs: each
 #    run makes the videos whose go-live time falls before the next run.
-#    Example: fetch ["06:00", "13:00", "17:00"],
-#    short_post_times ["08:00", "10:00", "14:00", "16:00", "18:00", "19:00"],
+#    Example: fetch ["00:00", "13:00", "17:00"],
+#    short_post_times ["06:00", "10:00", "14:00", "16:00", "18:00", "19:00"],
 #    long_post_times ["12:00", "16:30"]
-#      ->  06:00 run: Shorts 08:00 and 10:00, long 12:00
+#      ->  00:00 run: Shorts 06:00 and 10:00, long 12:00 (made overnight)
 #          13:00 run: Shorts 14:00 and 16:00, long 16:30
 #          17:00 run: Shorts 18:00 and 19:00 (no long video in its window)
 #    fetch_time is when you want a run to START. GitHub starts scheduled
@@ -81,8 +81,8 @@ channels:
     avoid_words: ["dead", "killed", "blood", "massacre"]
                                            # Q10. Words the script must never use  Options: [] for none, or ["word1", "word2"]
     lookback_days: 5                       # Q11. Use trending videos from the last N days   Options: 1 to 30
-    fetch_time: ["06:00", "13:00", "17:00"]  # Q12. When each run starts           Options: "HH:MM" for one run a day, or ["HH:MM", ...] for several (videos are shared between them)
-    short_post_times: ["08:00", "10:00", "14:00", "16:00", "18:00", "19:00"]
+    fetch_time: ["00:00", "13:00", "17:00"]  # Q12. When each run starts           Options: "HH:MM" for one run a day, or ["HH:MM", ...] for several (videos are shared between them)
+    short_post_times: ["06:00", "10:00", "14:00", "16:00", "18:00", "19:00"]
                                            # Q13. When each Short goes live (one per Short; replaces Q13 to Q15 below)   Options: list of "HH:MM"
     # first_post_time: "08:00"             # Q13. Instead of short_post_times: first Short's go-live time
     # post_frequency: "3 hours"            # Q14. ...then one every            Options: "15 mins" | "30 mins" | "1 hour" | "3 hours"
@@ -114,8 +114,8 @@ channels:
     video_length_seconds: 30               # Q9.  Options: 15 | 30 | 45 | 60
     avoid_words: []                        # Q10. Options: [] | ["word1", "word2"]
     lookback_days: 5                       # Q11. Options: 1 to 30
-    fetch_time: ["06:00", "13:00", "17:00"]  # Q12. Options: "HH:MM" | ["HH:MM", ...]
-    short_post_times: ["09:00", "14:30"]   # 1 Short in the morning run, 1 in the afternoon run
+    fetch_time: ["00:00", "13:00", "17:00"]  # Q12. Options: "HH:MM" | ["HH:MM", ...]
+    short_post_times: ["06:00", "14:30"]   # 1 Short in the midnight run, 1 in the afternoon run
                                            # Q13. Options: list of "HH:MM", one per Short
     days: "daily"                          # Q16. Options: "daily" | "weekdays" | "weekends" | [mon, wed, fri]
     timezone: "Asia/Kolkata"               # Q17
@@ -137,7 +137,7 @@ channels:
     voice_speed: "-5%"                     # Q7.  Options: "-15%" | "-5%" | "+0%" | "+10%"
     voice_expression: "measured"           # Q7b. Options: "measured" (calm storyteller) | "lively"
     tone: "A calm, atmospheric storyteller."
-    fetch_time: ["06:00", "13:00", "17:00"]  # Q12. Each run makes any episode due by tomorrow and finishes pictures left over
+    fetch_time: ["00:00", "13:00", "17:00"]  # Q12. Each run makes any episode due by tomorrow and finishes pictures left over
     short_post_times: ["15:00"]            # Q13. The teaser Short (same time as its episode)
     long_videos_per_day: 1                 # Q22. One episode a day (a day with a short chapter gets two)
     long_post_times: ["15:00"]             # Q24. Episodes go live at 15:00

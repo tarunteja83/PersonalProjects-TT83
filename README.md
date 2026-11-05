@@ -26,11 +26,11 @@ Everything is driven by three pages and one file:
 
 | Channel key | Channel | Audience | Voice | Daily (IST) |
 |---|---|---|---|---|
-| `geopolitics_war` | Frontline Ledger TT83 | General | `en-US-BrianMultilingualNeural`, measured | 6 Shorts and 2 long videos (5 to 7 min) with real footage of the people and events |
-| `kids_edu` | WonderSprout Kids TT83 | Children (Made for Kids) | `en-US-AvaMultilingualNeural`, lively | 2 Shorts and 3 long videos (5 to 7 min), hosted by the WonderSprout superhero |
+| `geopolitics_war` | Frontline Ledger TT83 | General | `en-US-BrianMultilingualNeural`, measured | 6 Shorts (from 06:00) and 2 long videos (5 to 7 min) with real footage of the people and events |
+| `kids_edu` | WonderSprout Kids TT83 | Children (Made for Kids) | `en-US-AvaMultilingualNeural`, lively | 2 Shorts (from 06:00) and 3 long videos (5 to 7 min), hosted by the WonderSprout superhero |
 
-Runs start at 06:00, 13:00 and 17:00 IST; each run makes the videos due before the next run and schedules them on
-YouTube. Narration supports English, Hindi and Telugu.
+Runs start around midnight, 13:00 and 17:00 IST; each run makes the videos due before the next run and schedules
+them on YouTube, so the midnight run has the morning's videos ready before the first ones go live at 06:00. Narration supports English, Hindi and Telugu.
 
 ### How It Works
 

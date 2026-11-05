@@ -90,13 +90,13 @@ Both channels run together three times a day: 13 videos in all. Each run sends a
 
 | Run (IST) | Frontline Ledger (8 a day) | WonderSprout (5 a day: long videos do better there) |
 |---|---|---|
-| 06:00 morning | long 12:00, Shorts 08:00 and 10:00 | long 11:30, Short 09:00 |
+| 00:00 midnight | long 12:00, Shorts 06:00 and 10:00 | long 11:30, Short 06:00 |
 | 13:00 afternoon | long 16:30, Shorts 14:00 and 16:00 | long 16:00, Short 14:30 |
 | 17:00 evening | Shorts 18:00 and 19:00 | long 18:30 |
 
 YouTube publishes each video at its time even though the GitHub job finished hours earlier.
 
-**Start times:** GitHub starts scheduled runs late (4 to 5 hours in October 2026), so `github_schedule_lead_minutes` in `BRAIN.md` (265) makes the GitHub schedule fire that much earlier: 01:35, 08:35 and 12:35 IST, so runs start near 06:00, 13:00 and 17:00. If GitHub is ever on time, the run simply starts early; the videos still go live at their times. The start message shows how early or late each run was; if it drifts, change the lead and run `--check`. A go-live time that has already passed by upload time goes live 10 minutes after upload instead, 30 minutes apart.
+**Start times:** GitHub starts scheduled runs late, by a different amount at different times of day (3 to 6 hours before dawn IST, 6 to 10 hours in the afternoon and evening, measured 26 Oct to 5 Nov 2026). So `github_schedule_lead_minutes` in `BRAIN.md` is set per run (00:00: 235, 13:00 and 17:00: 445 minutes) and the GitHub schedule fires at 20:05, 05:35 and 09:35 IST. The midnight run usually starts between about 23:00 and 02:00 and has the morning's videos ready well before 06:00. A run that starts early is fine: it still makes its own window's videos, and they go live at their times. The start message shows how early or late each run was; if it drifts, change the lead and run `--check`. A go-live time that has already passed by upload time goes live 10 minutes after upload instead, 30 minutes apart.
 
 **Hashtags:** each video gets up to 12 hashtags in its description. YouTube shows the first three above the title, so they are the two hashtags the **fastest-rising videos in the niche are using right now** (counted by the Scout across ~15 trending videos, weighted by views per hour) and the strongest topic hashtag. Then `#shorts` for Shorts, the other topic hashtags from the AI (2 broad, 3 specific to the story), the remaining trending ones, and the source video's own. Generic tags (#viral, #fyp, #trending) and other channels' names are left out. The same words, plus the footage topic terms, go into the video's search tags. The Telegram message lists them.
 
@@ -358,7 +358,7 @@ IST) one illustrated episode of 5 to 10 minutes goes live, with a teaser Short a
 | Video | A book page per sentence: the scene's picture with a slow zoom that continues across the scene, the sentence beside it (the speaker's name above dialogue), a title card, the end card. The teaser Short reuses the episode's most gripping lines with a hook on screen. |
 | Upload | Scheduled for 15:00, added to the book's playlist (created automatically), custom thumbnail, the Short linking to the episode. |
 
-**Made a day ahead.** Each run (06:00, 13:00, 17:00) makes any episode due by tomorrow. If the free picture allowance
+**Made a day ahead.** Each run (00:00, 13:00, 17:00) makes any episode due by tomorrow. If the free picture allowance
 runs out mid-episode, the work is kept in Drive and the next run continues, so the 15:00 video is still ready.
 
 **Your daily step in YouTube Studio (about 1 minute):** links in a Short's description can't be clicked, so after each
@@ -466,7 +466,8 @@ when they change. See *Telegram Inbox* below.
 
 - **GitHub may start a scheduled run hours after its scheduled time** (4 to 5 hours in October 2026). `github_schedule_lead_minutes` in `BRAIN.md` compensates (see "A typical day"). Future go-live times are always exact, because YouTube publishes them.
 - **Public repository:** Actions minutes are unlimited and secrets stay hidden (GitHub never shows them, masks them in logs, and doesn't give them to pull requests from forks). Run logs are public, so they must never print key values; the code masks them.
-- **The workflow file stores times in UTC**, so 06:00 IST appears as `30 0 * * *`. `--check` handles this.
+- **The workflow file stores times in UTC**, so 20:05 IST appears as `35 14 * * *`. `--check` handles this.
+- **A stuck request can't hold up a run:** Gemini requests give up after 3 minutes (10 to watch a video) and move to the next model, and each spoken sentence after 1 minute (then retried). The log is printed as it happens, so if a run ever stalls, its last line shows where.
 - **Daylight saving:** India has none. For timezones that do, run `--check` and push after each clock change.
 - **GitHub free minutes:** private repos get 2,000 a month. A Short takes about 3 minutes to build and a long video about 12. Run `--check` to see the estimate for your answers. If it's near or over 2,000, lower the counts or make the repository public; public repos have unlimited free minutes, and your keys stay safe in GitHub secrets either way.
 - **Test-run videos are kept** at "edited" and are uploaded by that channel's next real run.
@@ -485,7 +486,7 @@ when they change. See *Telegram Inbox* below.
 | `pip` says "filename too long" | Use a short-path venv (One-Time Setup, step 1). |
 | "429 RESOURCE_EXHAUSTED" from Gemini | The Gemini quota is used up (free tier: 20 requests a day per model, reset at 12:30 IST). Groq takes over automatically if `GROQ_API_KEY` is set (check the run log line "Backup AI when Gemini is out of quota: groq (key set)"). If both are out, finished videos still upload with the source video's title. |
 | "The user has exceeded the number of videos they may upload" | YouTube's daily upload limit for that channel (low for new, unverified channels). Verify the channel by phone at youtube.com/verify. The video stays queued and uploads on a later run. |
-| Runs start far from 06:00 / 13:00 / 17:00 | GitHub's delay changed. The Telegram start message shows how early or late; change `github_schedule_lead_minutes` in `BRAIN.md`, run `--check` and push. |
+| Runs start far from 00:00 / 13:00 / 17:00 | GitHub's delay changed. The Telegram start message shows how early or late; change that run's minutes in `github_schedule_lead_minutes` (`BRAIN.md`), run `--check` and push. |
 | The bot doesn't reply to a post in Telegram | Actions → **Telegram Inbox** → the latest run's step 4 log. GitHub may start the hourly run late; Telegram keeps unread posts for 24 hours. The bot must stay an admin of the channel, and only YouTube links can be watched. |
 | Telegram Inbox fails at step 5 (push) | Settings → Actions → General → Workflow permissions → **Read and write permissions**, then re-run it. |
 | Narration fails | The free voice service occasionally changes. Run `pip install -U edge-tts`. Videos stay queued and retry on the next run. |

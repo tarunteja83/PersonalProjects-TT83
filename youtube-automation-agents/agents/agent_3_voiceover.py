@@ -19,6 +19,8 @@ DURATION_TOLERANCE = 1.0
 # Stock footage changes scene about this often in long videos (footage.long_scene_seconds in BRAIN.md);
 # Shorts use footage.clips_per_video scenes
 LONG_SCENE_SECONDS = 8
+# One-pass narration of a whole script (the fallback voice) normally takes under a minute
+ONE_PASS_TIMEOUT_SECONDS = 600
 
 
 def stock_mode(config, profile):
@@ -239,7 +241,8 @@ class VoiceoverAgent:
                         end = max(end, start + chunk["duration"] / 1e7)
             return sentences, end
 
-        sentences, end = asyncio.run(narrate())
+        # A stalled connection to the voice service fails this video instead of hanging the whole run
+        sentences, end = asyncio.run(asyncio.wait_for(narrate(), ONE_PASS_TIMEOUT_SECONDS))
         return out_mp3, end + 0.5, sentences, []
 
     def narrate_within_limit(self, item, script):
