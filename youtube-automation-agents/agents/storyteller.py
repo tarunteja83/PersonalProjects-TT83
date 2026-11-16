@@ -1105,7 +1105,7 @@ class StoryChannel:
         bottom = draw_block(draw, lines, font, lh, 710, 230, 540, INK)
         draw_block(draw, [f"CHAPTER {ep['chapter']}" + (f" · PART {ep['part']}" if ep["parts"] > 1 else "")],
                    serif(46, True), 60, 710, bottom + 70, 540, (150, 30, 30))
-        draw_block(draw, ["Illustrated audiobook"], serif(34), 44, 710, bottom + 150, 540, FADED)
+        draw_block(draw, ["Illustrated retelling"], serif(34), 44, 710, bottom + 150, 540, FADED)
         image.save(path, "JPEG", quality=90)
         return path
 
@@ -1138,17 +1138,19 @@ class StoryChannel:
         print(f"[Story] Created the playlist for {self.book['title']}")
         return progress["playlist_id"]
 
-    def long_title(self, ep):
+    def long_title(self, ep, label="Illustrated Retelling"):
+        # "Retelling", not "Audiobook" (2026-11-16): episodes are condensed, so "audiobook" promised the full text.
+        # Episodes uploaded before that carry label="Illustrated Audiobook" (see reconcile).
         chapter = episode_label(ep)
-        title = f"{self.book['title']} | {chapter}: {ep['chapter_title']} | Illustrated Audiobook"
+        title = f"{self.book['title']} | {chapter}: {ep['chapter_title']} | {label}"
         if len(title) > 100 or not ep["chapter_title"]:
-            title = f"{self.book['title']} | {chapter} | Illustrated Audiobook"
+            title = f"{self.book['title']} | {chapter} | {label}"
         return title[:100]
 
     def hashtags(self, script):
         tags = [t if t.startswith("#") else "#" + t for t in script.get("hashtags") or []]
-        tags = [re.sub(r"[^\w#]", "", t) for t in tags] + ["#audiobook", "#classicliterature"]
-        return list(dict.fromkeys(t for t in tags if len(t) > 2))[:8]
+        tags = [re.sub(r"[^\w#]", "", t) for t in tags if "audiobook" not in t.lower()] + ["#classicliterature"]
+        return list(dict.fromkeys(t for t in tags if len(t) > 2))[:5]
 
     def description(self, ep, script, previous_id=None):
         book = self.book
@@ -1183,12 +1185,13 @@ class StoryChannel:
 
     def search_tags(self, ep, script):
         book = self.book
-        tags = [book["title"], f"{book['title']} audiobook", f"{book['title']} chapter {ep['chapter']}",
-                book["author"], f"{book['author']} audiobook"] + list(script.get("keywords") or []) + \
-            ["illustrated audiobook", "classic stories", "audiobook full", self.profile["channel_name"]]
+        # No "audiobook" / "full" tags: the episodes are condensed retellings (2026-11-16, misleading metadata)
+        tags = [book["title"], f"{book['title']} story", f"{book['title']} chapter {ep['chapter']}",
+                book["author"]] + [k for k in script.get("keywords") or [] if "audiobook" not in k.lower()] + \
+            ["illustrated story", "classic stories", self.profile["channel_name"]]
         kept, length = [], 0
         for tag in dict.fromkeys(" ".join(re.sub(r"[<>,]", " ", t).split()) for t in tags if t):
-            if length + len(tag) + 3 <= 450:
+            if len(kept) < 15 and length + len(tag) + 3 <= 450:
                 kept.append(tag)
                 length += len(tag) + 3
         return kept
@@ -1235,7 +1238,7 @@ class StoryChannel:
             return
         done, changed = self.book["progress"]["episodes"], False
         for ep in self.book["episodes"]:
-            video_id = titles.get(self.long_title(ep))
+            video_id = titles.get(self.long_title(ep)) or titles.get(self.long_title(ep, "Illustrated Audiobook"))
             if not video_id or (done.get(ep["key"]) or {}).get("status") == "uploaded":
                 continue
             day = self.video_day(video_id)

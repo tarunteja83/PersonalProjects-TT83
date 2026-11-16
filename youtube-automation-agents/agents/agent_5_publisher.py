@@ -19,8 +19,12 @@ from brain import channel_matches, channel_scopes, item_matches
 UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 UPLOAD_RETRIES = 5
 PASSED_SLOT_GAP = timedelta(minutes=30)
-MAX_HASHTAGS = 12
+# Kept small on purpose since Frontline Ledger was removed for "spam and deceptive practices" (2026-11-15):
+# YouTube's spam policy names excessive or unrelated tags, so only the video's own topic tags are used
+MAX_HASHTAGS = 5
+MAX_SEARCH_TAGS = 15
 MAX_DESCRIPTION = 4900
+AI_NOTE = "Script written with AI assistance and narrated with an AI voice."
 # Words too general to make a search phrase relevant to a video on their own (without a final "s", as compared:
 # "kids" -> "kid", "this" -> "thi", "news" -> "new")
 KEYWORD_FILLER = {"kid", "children", "short", "video", "with", "from", "thi", "that", "what", "your", "new",
@@ -80,13 +84,18 @@ class PublisherAgent:
 
     @staticmethod
     def fallback_seo_package(item, max_title):
-        """Used when Gemini is unavailable: the source video's own title, and the opening of our narration."""
-        title = re.sub(r"#\w+", "", item.get("original_title") or "").replace('"', "")
-        title = " ".join(title.split()).strip(" |-:") or "New video"
-        if len(title) > max_title:
-            title = title[:max_title - 3].rsplit(" ", 1)[0] + "..."
+        """Used when the AI is unavailable: a title from our own search keyword or narration, never the source
+        video's title (copying another creator's title is misleading metadata). Raises if there is neither, so the
+        video stays "edited" and is retried next run."""
         script = " ".join((item.get("generated_script") or "").split())
         sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", script) if s.strip()]
+        title = (item.get("seo_keyword") or "").strip()
+        title = title[:1].upper() + title[1:] if title else (sentences[0] if sentences else "")
+        title = " ".join(re.sub(r"#\w+", "", title).replace('"', "").split()).strip(" |-:")
+        if not title:
+            raise RuntimeError("no keyword or narration to build a title from")
+        if len(title) > max_title:
+            title = title[:max_title - 3].rsplit(" ", 1)[0] + "..."
         return title, " ".join(sentences[:2])[:400]
 
     def generate_seo_package(self, item):
@@ -127,21 +136,12 @@ class PublisherAgent:
         return new_title, self.finish_description(item, seo_body.strip(), gemini_tags)
 
     def hashtags(self, item, gemini_tags):
-        """Hashtags for reach: what is trending in the niche right now, the video's own topic, and the source's.
-
-        YouTube shows the first three above the title, so they are the two strongest trending niche tags and the
-        strongest topic tag; then #shorts (Shorts), the other topic tags, the rest of the trending ones and the
-        source video's. Generic tags (#viral, #fyp) and other channels' names are left out; at most MAX_HASHTAGS.
+        """Hashtags that describe this video only: the AI's topic hashtags (written from our script), then
+        #shorts for Shorts. Hashtags borrowed from other people's trending or source videos are no longer used
+        (since 2026-11-16): tags unrelated to the video are spam under YouTube's policy. At most MAX_HASHTAGS.
         """
-        source_text = f"{item.get('original_title') or ''} {item.get('original_description') or ''}"
-        creator = re.sub(r"\W", "", (item.get("original_creator") or "").lower())
-        source = [t for t in re.findall(r"#\w+", source_text)
-                  if not (creator and (creator in t.lower() or t.lower().lstrip("#") in creator))
-                  and t.lower() not in GENERIC_HASHTAGS]
-        niche = list(item.get("trending_hashtags") or [])
-        topic = re.findall(r"#\w+", gemini_tags)
-        tags = (niche[:2] + topic[:1] + (["#shorts"] if item.get("format") != "long" else [])
-                + topic[1:] + niche[2:] + source)
+        topic = [t for t in re.findall(r"#\w+", gemini_tags) if t.lower() not in GENERIC_HASHTAGS]
+        tags = topic[:1] + (["#shorts"] if item.get("format") != "long" else []) + topic[1:]
         if len(tags) <= 1:
             # Nothing from Gemini or the source: fall back to the channel's niche words
             tags += ["#" + w.lower() for w in re.findall(r"[A-Za-z]{4,}", self.profile.get("niche", ""))][:4]
@@ -178,6 +178,8 @@ class PublisherAgent:
         kept, seen, length = [], set(), 0
         # YouTube rejects tags with < or > and splits them at commas
         for tag in (" ".join(re.sub(r"[<>,]", " ", t).split()) for t in tags):
+            if len(kept) >= MAX_SEARCH_TAGS:
+                break
             if not tag or tag.lower() in seen:
                 continue
             # YouTube rejects the upload if the tags add up to more than 500 characters; shorter ones may still fit
@@ -193,10 +195,10 @@ class PublisherAgent:
         item["upload_hashtags"] = tags
         credit = self.credit_block(item)
         # YouTube rejects descriptions over 5,000 characters: shorten the AI text, never the hashtags or credits
-        room = MAX_DESCRIPTION - len(credit) - len(" ".join(tags)) - 4
+        room = MAX_DESCRIPTION - len(credit) - len(" ".join(tags)) - len(AI_NOTE) - 6
         if len(text) > room:
             text = text[:max(room - 3, 0)].rstrip() + "..."
-        return "\n\n".join(p for p in (text, " ".join(tags)) if p) + credit
+        return "\n\n".join(p for p in (text, AI_NOTE, " ".join(tags)) if p) + credit
 
     @staticmethod
     def credit_block(item):

@@ -62,7 +62,9 @@
 channels:
 
   geopolitics_war:                         # Q1. Channel to post to (key from channels.yaml)
-    run: true                              # Q2. Include this channel?            Options: true | false
+    run: false                             # Q2. Include this channel?            Options: true | false
+                                           #     OFF since 2026-11-16: YouTube removed Frontline Ledger (spam/deceptive
+                                           #     practices policy). Never turn on or make a new channel while it is banned.
     genre: "Geopolitics of India, Europe, Russia and America, and current and ongoing wars"
                                            # Q3. Genre to source trending videos for (any text)
     search_phrases:                        # Q4. YouTube searches that find trending Shorts (1 to 5 lines; each run starts from the next phrase)

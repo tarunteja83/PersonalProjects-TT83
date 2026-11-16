@@ -28,6 +28,9 @@ other people's videos; it breaks YouTube's policies and can get a channel remove
 4. Title for clicks without misleading [S1]: put the topic keyword people search for in the first 3 to 5 words,
    add curiosity or a number, stay under 60 characters (70 for long videos), and only promise what the video
    delivers.
+5. Never mislead [policy, 2026-11-16]: no "BREAKING", "LIVE", "LEAKED", shock or fear words unless literally true;
+   no claim the script can't back up; never present opinion or prediction as fact; hashtags and keywords only for
+   what the video actually shows; write something original, never a copy of another video's title or wording.
 
 ## HOW THE PIPELINE APPLIES THEM
 | Technique | Where | What it does |
@@ -45,7 +48,7 @@ other people's videos; it breaks YouTube's policies and can get a channel remove
 | A human-sounding voice [S2] | Agent 3, `expressive_voice.py` | Each sentence gets its own pitch, speed and volume (`voice_expression`: lively for kids, measured for news). |
 | Fun, hooky kids stories [S2] | BRAIN.md Agent 3 instructions | Named heroes with a funny trait, a silly problem, three escalating tries, a twist; sound words; the viewer is asked something every 20 to 30 seconds. |
 | A recognisable host for kids [S2] | Agent 4, `mascot.py` | WonderSprout, a woman superhero, narrates and reacts on screen (intro, expressions, outro); a recurring character gives kids a reason to come back. |
-| Trending hashtags for reach [S2] | Agents 1 and 5 | The hashtags the fastest-rising niche videos use right now lead each description, followed by the topic's own (up to 12). |
+| Own hashtags only [policy] | Agent 5 | Up to 5 hashtags, all describing this video (the AI's topic tags, plus #shorts on Shorts), and at most 15 hidden search tags. Trending hashtags borrowed from other videos were dropped on 2026-11-16 after YouTube removed Frontline Ledger for spam and deceptive practices; unrelated tags count as spam. Every description says the script is AI-assisted and the voice is AI. |
 | Search keywords people actually type [S3] | Agents 1, 3, 5 and 7 | The Scout collects real search phrases for each niche phrase (YouTube autocomplete, free and outside the API quota; other-language ones dropped) and the keyword tags of the fastest-rising videos (already fetched, no extra quota). The script AI picks one main KEYWORD from them, puts it in the first words of the title and the first description sentence, and writes 6 close variations (same request). The upload's hidden tags lead with the keyword, its variations and the real phrases whose every word is in the video (no stuffing, no other channels' names). Telegram shows the keyword (🔎). |
 
 **Not automated yet (owner):**
@@ -97,7 +100,7 @@ other people's videos; it breaks YouTube's policies and can get a channel remove
    owner to choose more natural voices (Ava, Emma, Andrew, Brian).
 3. **Kids need fun and hooks, and long videos work better than Shorts** on WonderSprout.
    → Adopted: new kids writing rules; WonderSprout moved to 3 long videos and 2 Shorts a day (was 2 and 6).
-4. **More reach from trending hashtags** in each niche.
+4. **More reach from trending hashtags** in each niche. (Withdrawn 2026-11-16: borrowed tags count as spam.)
    → Adopted: trending niche hashtags first in every description.
 
 ### S3. Owner's observation: keywords plus hashtags (2026-10-31)
@@ -113,6 +116,7 @@ other people's videos; it breaks YouTube's policies and can get a channel remove
    for this; now it has real data instead of a guess).
 2. **Keywords and hashtags together.**
    → Adopted: the hidden upload tags lead with the keyword and its variations; the trending hashtags are unchanged.
+   → Revised 2026-11-16: borrowed trending hashtags removed (see "Own hashtags only").
 3. Rejected: keyword stuffing (lists of keywords in the description, unrelated popular phrases or other channels'
    names in tags). It's against YouTube's spam and misleading-metadata policies; only phrases the video is about are
    used.

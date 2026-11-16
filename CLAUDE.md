@@ -284,6 +284,18 @@ early is harmless (`run_window` takes the nearest occurrence of the fetch time; 
     (NB3OQ2IEM4w, 21 s) and queued it for WonderSprout; approve/reject/queue/cancel and the Scout's request handling
     tested offline with stubs. Gemini watching a video was first confirmed on S1 (~63K tokens at low resolution).
 
+## 16 Nov 2026: Frontline Ledger REMOVED by YouTube; pipeline paused
+- ~15 Nov YouTube terminated Frontline Ledger (UCvYZj7hz_D0b7Q1JRSLAfOw) for "spam, deceptive practices and scams";
+  the email says the owner may not own or create other channels. The owner appealed through Studio (from the email
+  link, so it is tied to the channel). Waiting for the decision.
+- The daily workflow is DISABLED on GitHub (owner's request, 16 Nov); Telegram Inbox still on. `geopolitics_war` has
+  `run: false`. Don't re-enable, upload from the laptop, or create a channel until the owner says the appeal is settled.
+- Changes to lower spam signals: hashtags only the video's own (max 5, no borrowed trending/source tags), max 15
+  search tags, AI note in every description, the no-AI fallback title never copies the source title, ACTIVE RULE 5
+  (never mislead). Inkbound: "Illustrated Audiobook" -> "Illustrated Retelling" (condensed, so "audiobook" misled;
+  `reconcile` also matches the old title), no "audiobook"/"full" tags. `containsSyntheticMedia` was already true.
+- Not changed, still a risk (owner to decide): volume of near-identical AI videos (inauthentic/mass-produced content).
+
 ## 5 Nov 2026: midnight run, per-run lead times, no more silent hangs
 - Later the same day (owner's request): 1 long + 1 Short a day per trend channel, the footage check and script
   cleaning above, and Inkbound's storyteller voice: `voice_expression: "storyteller"` at `voice_speed: "-8%"`
